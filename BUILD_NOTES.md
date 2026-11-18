@@ -81,3 +81,27 @@ poses a frozen scene and sets `window.__shotReady`.
    errors, zero console errors, zero requests outside localhost.
 4. Kit check: `node cli/makefun.mjs check --repo <repo> --worktree`
    → 4 passed, 0 failed, 16 skipped, 5 checked at submission.
+
+## Round 6 — outcome (coordinator addendum, 2026-11-18)
+
+- Recording: 01a1ecaf-5a7a-75ac-af97-76c68e7b08b8 (started 2026-11-18T03:24:37Z,
+  sealed 2026-11-18T03:35:28Z, 49 chunks, 1123 leaves). Tree was emptied
+  before it started (only .git + vendor/ left); all files authored
+  in-session by the recorded builder.
+- Entry commit: d5a4363bbd45b0ca058a5a4e122f76ab3ca6c955 (27 files, pushed
+  to origin main). THIS is the commit to submit.
+- Independent grader proof (coordinator, after push): fresh
+  `git clone https://github.com/DianChairo/marina-heat` at d5a4363,
+  tree made read-only, run as user `nobody` with
+  `MAKEFUN_OUTPUT_DIR=/tmp/grader6-out` (absolute) and a 10s timeout
+  → exit 0; output holds game/ (19 entries), screenshots/ (4 JPEGs) and
+  a valid dossier.json. Relative flow (`MAKEFUN_OUTPUT_DIR=out`, writable
+  copy, nobody) also exit 0. run_completes should now pass.
+- Submit attempt 2026-11-18 ~03:37Z: REFUSED, HTTP 429 entry quota —
+  5/5 submissions already taken this UTC day; a quota refusal never
+  counts, nothing was burned. READY TO SUBMIT: re-run the same submit
+  on/after 2026-11-19T00:00:00Z (07:00 WIB), before the
+  2026-11-24T15:00:00Z deadline:
+  `cd ~/workspace/makefun/gta6-01-kit && node cli/makefun.mjs submit --competition gta6-01 --recording 01a1ecaf-5a7a-75ac-af97-76c68e7b08b8 --repo-url https://github.com/DianChairo/marina-heat --commit d5a4363bbd45b0ca058a5a4e122f76ab3ca6c955 --title "Marina Heat" --keypair ~/workspace/makefun/makefun-keypair.json --repo ~/workspace/makefun/entries/gta6-01 --prompt-file ~/.makefun/prompt-gta6-01.txt --prompt-origin other --prompt-via "Typed by the user in this WhatsApp chat; a later context compaction means it is not the first message of the current session segment" --harness muse-app --harness-version 1.3 --model muse-spark-1.3 --provider meta --effort default --mcp none`
+  (Do NOT pass --muse-usage to submit; record already consumed
+  ~/.makefun/muse-usage-gta6-01.jsonl at seal.)
