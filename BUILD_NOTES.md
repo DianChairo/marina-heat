@@ -47,4 +47,5 @@
 - Dossier build: MAKEFUN_OUTPUT_DIR=out node main.ts — 19 game files,
   dossier.json 516,569 bytes. vendor/makefun-game.ts untouched (git diff
   clean). Game source 55,391 bytes / 1,568 lines across 16 modules + main.ts.
-- Final commit: TBD (filled below after push)
+- Final commit: entry c0a64da74f54f500e4041d84a107e7e8267964f8 (game + all
+  files); this notes update is a docs-only follow-up commit on top.
