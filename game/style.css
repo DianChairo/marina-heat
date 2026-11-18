@@ -1,3 +1,63 @@
-html, body { margin: 0; height: 100%; overflow: hidden; background: #101018; }
-#game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-#status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* Marina Heat — HUD and screens. Coral-and-teal marina noir over a full-window canvas. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #20242a; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; color: #f5f6fa; }
+#game { position: fixed; inset: 0; display: block; cursor: crosshair; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+#topleft { position: absolute; top: 12px; left: 12px; }
+#minimap { width: 190px; height: 150px; border: 2px solid rgba(255,255,255,0.55); border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,0.45); background: #274b63; }
+#undermap { margin-top: 7px; width: 190px; }
+#healthwrap { height: 13px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.5); border-radius: 6px; overflow: hidden; }
+#healthfill { height: 100%; width: 100%; background: #69f0ae; transition: width 0.15s; }
+#cashline { margin-top: 5px; font-size: 13.5px; font-weight: 700; text-shadow: 0 1px 3px #000, 0 0 8px rgba(0,0,0,0.6); }
+#pkg { margin-top: 3px; font-size: 12px; font-weight: 800; color: #ffd740; text-shadow: 0 1px 3px #000; letter-spacing: 0.4px; }
+
+#topright { position: absolute; top: 10px; right: 14px; text-align: right; }
+#stars { font-size: 30px; letter-spacing: 3px; color: #5a6270; text-shadow: 0 2px 6px rgba(0,0,0,0.7); }
+.meterwrap { display: flex; align-items: center; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.meterwrap span { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; text-shadow: 0 1px 3px #000; }
+.meter { width: 118px; height: 9px; background: rgba(0,0,0,0.55); border: 1px solid rgba(255,255,255,0.45); border-radius: 5px; overflow: hidden; }
+#heatfill { height: 100%; width: 0; background: linear-gradient(90deg, #ffb74d, #ff7043); }
+#bustedfill { height: 100%; width: 0; background: linear-gradient(90deg, #6db3ff, #2962ff); }
+
+#objective { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); max-width: 62%;
+  background: rgba(12,16,24,0.78); border: 1px solid rgba(255,215,64,0.65); border-radius: 8px;
+  padding: 7px 16px; font-size: 15.5px; font-weight: 700; color: #ffe082; text-align: center;
+  text-shadow: 0 1px 2px #000; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+
+#phone { position: absolute; right: 14px; bottom: 86px; width: 292px;
+  background: rgba(10,14,20,0.88); border: 1px solid rgba(255,255,255,0.28); border-radius: 14px;
+  padding: 10px 13px; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }
+#phonename { font-size: 12.5px; font-weight: 800; color: #7ee8fa; margin-bottom: 4px; }
+#phonetext { font-size: 13.5px; line-height: 1.45; color: #eef2f5; }
+
+#speedwrap { position: absolute; right: 22px; bottom: 30px; text-align: right; text-shadow: 0 2px 6px #000; }
+#speed { font-size: 44px; font-weight: 800; font-style: italic; }
+#speedwrap small { display: block; font-size: 11px; letter-spacing: 2px; opacity: 0.85; margin-top: -6px; }
+
+#bottombar { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; }
+#hint { font-size: 16px; font-weight: 800; color: #fff; text-shadow: 0 1px 4px #000, 0 0 10px rgba(0,0,0,0.7); min-height: 20px; }
+#controls { font-size: 11.5px; opacity: 0.75; text-shadow: 0 1px 3px #000; margin-top: 2px; }
+#muteline { font-size: 11px; color: #ffb74d; min-height: 13px; }
+
+#startscreen, #endscreen, #pauseoverlay { position: fixed; inset: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(ellipse at center, rgba(10,12,20,0.42), rgba(10,12,20,0.78)); }
+.panel { max-width: 560px; width: calc(100% - 48px); text-align: center;
+  background: rgba(13,18,28,0.92); border: 1px solid rgba(255,255,255,0.22); border-radius: 16px;
+  padding: 30px 36px 34px; box-shadow: 0 18px 50px rgba(0,0,0,0.6); }
+.panel h1 { font-size: 46px; font-style: italic; letter-spacing: 1px; color: #fff; }
+.panel h1 span { color: #ff7043; }
+#endtitle { color: #ff5252; }
+.panel .tag { color: #7ee8fa; font-size: 14.5px; margin: 6px 0 12px; }
+.panel .story { font-size: 14.5px; line-height: 1.55; color: #dfe6ec; }
+.ctrls { list-style: none; margin: 16px auto 20px; text-align: left; max-width: 380px;
+  font-size: 13.5px; line-height: 1.9; color: #cfd8dc; }
+.ctrls b { color: #ffd740; }
+.panel button { pointer-events: auto; cursor: pointer; border: 0; border-radius: 9px;
+  padding: 12px 28px; margin: 4px 5px 0; font-size: 16.5px; font-weight: 800; letter-spacing: 0.6px;
+  background: linear-gradient(180deg, #ff8a5c, #f4511e); color: #fff; box-shadow: 0 5px 16px rgba(244,81,30,0.45); }
+.panel button:hover { filter: brightness(1.1); }
+#continuebtn { background: linear-gradient(180deg, #4fc3f7, #0288d1); box-shadow: 0 5px 16px rgba(2,136,209,0.45); }
+#endstats { font-size: 15.5px; line-height: 1.8; color: #eef2f5; margin: 10px 0 18px; }
