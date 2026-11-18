@@ -1,36 +1,44 @@
-// Marina Heat — make.fun entry packager (Node standard library only).
-// Copies the playable game/ tree and the screenshots/ into the output directory and
-// writes dossier.json there, built by the kit's own vendor/makefun-game.ts so the
-// dossier always matches the files that were actually shipped.
-import { cpSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+// Marina Heat — hand-in program for the gta6-01 bounty (Node 22, standard library only).
+// Copies the playable game/ and its screenshots/ beside this file into the output directory
+// and writes dossier.json there with the vendored make.fun library, exactly as the kit asks.
+// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
+//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
+
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const GAME_TITLE = 'Marina Heat';
-const repoDir = resolve(fileURLToPath(new URL('.', import.meta.url)));
-const outDir = resolve(process.env.MAKEFUN_OUTPUT_DIR || '/output');
+const GAME_TITLE = 'Marina Heat — an original open-world crime game in Coral Marina';
+const here = fileURLToPath(new URL('.', import.meta.url));
+const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+
+mkdirSync(out, { recursive: true });
+cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
+mkdirSync(join(out, 'screenshots'), { recursive: true });
+if (existsSync(join(here, 'screenshots'))) {
+  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+}
 
 function countFiles(dir: string): number {
   let n = 0;
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) n += countFiles(p);
-    else n++;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    n += entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1;
   }
   return n;
 }
+const copied = countFiles(join(out, 'game')) + countFiles(join(out, 'screenshots'));
+console.log(`[marina-heat] handing in "${GAME_TITLE}"`);
+console.log(`[marina-heat] copied ${copied} files (game/ + screenshots/) to ${out}`);
 
-mkdirSync(outDir, { recursive: true });
-cpSync(join(repoDir, 'game'), join(outDir, 'game'), { recursive: true });
-cpSync(join(repoDir, 'screenshots'), join(outDir, 'screenshots'), { recursive: true });
-
-const dossier = buildDossier(repoDir, {
-  text_max_bytes: 2_000_000,
-  screenshots: { max: 8, max_bytes: 256 * 1024 },
-});
-writeFileSync(join(outDir, 'dossier.json'), dossier);
-
-const copied = countFiles(join(outDir, 'game')) + countFiles(join(outDir, 'screenshots'));
-console.log(`${GAME_TITLE}: copied ${copied} files (game + screenshots) to ${outDir}`);
-console.log(`${GAME_TITLE}: dossier.json written (${dossier.byteLength} bytes) — welcome to Coral Marina.`);
+writeFileSync(
+  join(out, 'dossier.json'),
+  buildDossier(out, {
+    text_max_bytes: 163840,
+    screenshots: { max: 4, max_bytes: 262144 },
+    game_max_files: 993,
+    game_max_bytes: 50331648,
+    game_path_max_bytes: 1000,
+  }),
+);
+console.log('[marina-heat] dossier.json written — see you on the leaderboard.');

@@ -1,129 +1,124 @@
-// missions.js — Marisol Vega's work board. Walk (or drive) to the glowing M marker
-// and press E to take the next job. Three jobs string the story together:
-// Bay Run (checkpoint race), Special Delivery (hot package), Rampage (chaos quota).
-import { dist } from './rng.js';
-
-export const MARKER = { x: 716, y: 748 };
-const ORDER = ['bayrun', 'delivery', 'rampage'];
-const DEFS = {
-  bayrun: {
-    name: 'Bay Run', pay: 400, respect: 10,
-    brief: 'Bay Run: hit every checkpoint before the clock dies. Clean lines, no heroics. — M',
-    done: 'Smooth. The marina crew noticed that driving. — M',
+// missions.js — Marisol Vega's job board: Bay Run, Special Delivery, Rampage + story texts.
+import { dist, clamp } from './rng.js';
+import { addCrime } from './police.js';
+export const MARKER = { x: 655, y: 655 }; // downtown corner, block interior edge by the marina offices
+const JOBS = [
+  {
+    id: 'race', name: 'Bay Run', pay: 450, respect: 30,
+    brief: 'Bay Run: hit every checkpoint around the bay. Fast wheels help. Clock is ticking!',
+    done: 'Clean lines, fast time. The bay crew noticed. Pay sent.',
   },
-  delivery: {
-    name: 'Special Delivery', pay: 550, respect: 14,
-    brief: 'Special Delivery: pick up the package at Pier West and drop it at the beach club. It is hot — expect company. — M',
-    done: 'Package delivered, no questions asked. You are earning a reputation. — M',
+  {
+    id: 'delivery', name: 'Special Delivery', pay: 600, respect: 40,
+    brief: 'A package waits by the pier lockers. Grab it, drop it at the marked garage. Carrying it runs hot — expect attention.',
+    done: 'Package delivered, no questions asked. You are becoming reliable.',
   },
-  rampage: {
-    name: 'Rampage', pay: 650, respect: 18,
-    brief: 'Rampage: a rival crew needs a message. Cause 600 chaos — wrecks, near misses, mayhem — before time runs out. — M',
-    done: 'Message received, loud and clear. Coral Marina is ours. — M',
+  {
+    id: 'rampage', name: 'Rampage', pay: 550, respect: 45,
+    brief: 'A rival crew thinks Marina is theirs. Prove otherwise: cause pure chaos before the timer dies.',
+    done: 'Message sent, loud and clear. Coral Marina remembers your name.',
   },
-};
-const CHECKPOINTS = [
-  { x: 1008, y: 368 }, { x: 1648, y: 688 }, { x: 1968, y: 1328 },
-  { x: 1008, y: 1648 }, { x: 368, y: 1008 },
 ];
-const PICKUP = { x: 368, y: 1328 };
-const DROPOFF = { x: 1968, y: 368 };
-
-export function makeMissionState() {
-  return { active: null, phase: '', timer: 0, idx: 0, chaosStart: 0, carrying: false, nextIdx: 0, target: null, label: '' };
+export function createMissions() {
+  return { idx: 0, active: null, checkpoints: [], cpIdx: 0, timer: 0, scoreNeed: 0, chaos: 0, hasPackage: false, phase: '', target: null, nearMissCd: 0 };
 }
-
-export function startMission(G) {
-  const kind = ORDER[G.mission.nextIdx % ORDER.length];
-  const m = G.mission, def = DEFS[kind];
-  m.active = kind; m.carrying = false;
-  if (kind === 'bayrun') { m.phase = 'race'; m.idx = 0; m.timer = 80; m.target = CHECKPOINTS[0]; m.label = 'Checkpoint 1/5'; }
-  if (kind === 'delivery') { m.phase = 'pickup'; m.timer = 120; m.target = PICKUP; m.label = 'Pick up the package'; }
-  if (kind === 'rampage') { m.phase = 'chaos'; m.timer = 80; m.chaosStart = G.chaosRun; m.target = null; m.label = 'Cause 600 chaos'; }
-  G.showPhone(def.brief, 7);
-  G.audio.sting(true);
+export function missionMarker(S) {
+  const m = S.missions;
+  if (!m.active) return { x: MARKER.x, y: MARKER.y, label: 'M', color: '#ffd23f' };
+  if (m.active.id === 'race') { const cp = m.checkpoints[m.cpIdx]; return cp ? { x: cp.x, y: cp.y, label: 'CP', color: '#3ec6d8' } : null; }
+  if (m.active.id === 'delivery') return m.hasPackage ? { x: m.target.x, y: m.target.y, label: 'DROP', color: '#7bf1a8' } : { x: m.target.x, y: m.target.y, label: 'PKG', color: '#ffd23f' };
+  return null;
 }
-
-function completeMission(G) {
-  const m = G.mission, def = DEFS[m.active];
-  G.save.cash += def.pay; G.save.respect += def.respect; G.save.missionsDone++;
-  G.persist();
-  G.showPhone(def.done + ` (+$${def.pay})`, 6);
-  G.audio.cash(); G.audio.sting(true);
-  G.spawnPopup(G.player.x, G.player.y - 26, `+$${def.pay}`, '#7CFC98');
-  m.active = null; m.target = null; m.carrying = false; m.nextIdx++;
-  G.wanted.heat = Math.max(0, G.wanted.heat - 20);
-}
-function failMission(G, why) {
-  G.showPhone(`${why} The job is off. Come back to the M when you are ready. — M`, 6);
-  G.audio.sting(false);
-  G.mission.active = null; G.mission.target = null; G.mission.carrying = false;
-}
-
-export function updateMission(G, dt) {
-  const m = G.mission;
-  if (!m.active) return;
-  m.timer -= dt;
-  if (m.timer <= 0) { failMission(G, 'Out of time.'); return; }
-  const P = G.player, pos = P.inCar || P;
-  if (m.active === 'bayrun') {
-    if (dist(pos.x, pos.y, m.target.x, m.target.y) < 62) {
-      G.audio.cash(); G.addChaos(10, 'checkpoint');
-      m.idx++;
-      if (m.idx >= CHECKPOINTS.length) { completeMission(G); return; }
-      m.timer += 9; m.target = CHECKPOINTS[m.idx]; m.label = `Checkpoint ${m.idx + 1}/5`;
-    }
-  } else if (m.active === 'delivery') {
-    if (m.phase === 'pickup' && dist(pos.x, pos.y, PICKUP.x, PICKUP.y) < 56) {
-      m.phase = 'dropoff'; m.carrying = true; m.target = DROPOFF; m.label = 'Deliver to the beach club';
-      G.showPhone('Package on board. Every cop in the marina just got your description. Move. — M', 5);
-      G.reportCrime(45, P.x, P.y);
-    } else if (m.phase === 'dropoff' && dist(pos.x, pos.y, DROPOFF.x, DROPOFF.y) < 62) {
-      completeMission(G); return;
-    }
-  } else if (m.active === 'rampage') {
-    const got = G.chaosRun - m.chaosStart;
-    m.label = `Cause 600 chaos — ${Math.min(600, got | 0)}/600`;
-    if (got >= 600) { completeMission(G); return; }
+export function startMission(S) {
+  const m = S.missions, job = JOBS[m.idx % JOBS.length];
+  m.active = job; m.chaos = 0; m.hasPackage = false; m.cpIdx = 0;
+  if (job.id === 'race') {
+    m.timer = 95;
+    m.checkpoints = [
+      { x: 1055, y: 255 }, { x: 2055, y: 655 }, { x: 2455, y: 1455 }, { x: 1655, y: 2055 },
+      { x: 655, y: 2455 }, { x: 255, y: 1455 }, { x: 655, y: 655 },
+    ];
+  } else if (job.id === 'delivery') {
+    m.timer = 150; m.target = { x: 255, y: 2655 }; // pier lockers, south-west beach road
+  } else {
+    m.timer = 80; m.scoreNeed = 600;
   }
+  S.phoneMsg('Marisol Vega', job.brief);
+  S.audio.sting(true);
+  S.objective = job.name + ' — see the marker on your map.';
 }
-
-export function missionObjective(G) {
-  const m = G.mission;
-  if (!m.active) return G.nearMarker ? 'Press E — Marisol has work for you' : '';
-  const t = Math.max(0, m.timer);
-  const mm = (t / 60) | 0, ss = (t % 60) | 0;
-  const time = `${mm}:${ss.toString().padStart(2, '0')}`;
-  let d = '';
-  if (m.target) d = ` · ${Math.round(dist((G.player.inCar || G.player).x, (G.player.inCar || G.player).y, m.target.x, m.target.y))}m`;
-  return `${DEFS[m.active].name}: ${m.label}${d} · ${time}`;
+function finish(S, win) {
+  const m = S.missions, job = m.active;
+  if (win) {
+    S.cash += job.pay; S.score += job.respect; S.stats.missionsDone++;
+    S.phoneMsg('Marisol Vega', job.done + ` (+$${job.pay})`);
+    S.audio.cash(); S.audio.sting(true);
+    m.idx++;
+    S.objective = 'Head to the M marker for your next job.';
+  } else {
+    S.phoneMsg('Marisol Vega', 'That fell apart. Shake the heat, come back to the marker, try again.');
+    S.audio.sting(false);
+    S.objective = 'Mission failed. Return to the M marker.';
+  }
+  if (m.hasPackage) m.hasPackage = false;
+  m.active = null; m.checkpoints = [];
+  S.saveBest();
 }
-
-export function drawMissionWorld(ctx, G, t) {
-  const m = G.mission;
-  const pulse = 1 + Math.sin(t * 4) * 0.12;
-  // The M board marker (always standing when no job is active).
+export function updateMissions(S, dt) {
+  const m = S.missions, p = S.player;
+  m.nearMissCd = Math.max(0, m.nearMissCd - dt);
   if (!m.active) {
-    ctx.save(); ctx.translate(MARKER.x, MARKER.y);
-    ctx.fillStyle = 'rgba(255,64,129,0.25)';
-    ctx.beginPath(); ctx.arc(0, 0, 30 * pulse, 0, 7); ctx.fill();
-    ctx.fillStyle = '#ff4081'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 19px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('M', 0, 1);
-    ctx.restore();
+    if (dist(p.x, p.y, MARKER.x, MARKER.y) < 60) {
+      S.objective = 'Press E — take the job: ' + JOBS[m.idx % JOBS.length].name;
+      if (S.input.hit('KeyE')) startMission(S);
+    } else S.objective = 'Go to the M marker downtown to work for Marisol.';
+    return;
   }
-  // Active target beacon: a column of light you can see across the map.
-  if (m.target) {
-    const { x, y } = m.target;
-    const g = ctx.createLinearGradient(x, y - 190, x, y);
-    g.addColorStop(0, 'rgba(255,215,64,0)'); g.addColorStop(1, 'rgba(255,215,64,0.5)');
-    ctx.fillStyle = g; ctx.fillRect(x - 9, y - 190, 18, 190);
-    ctx.fillStyle = 'rgba(255,215,64,0.3)';
-    ctx.beginPath(); ctx.arc(x, y, 34 * pulse, 0, 7); ctx.fill();
-    ctx.fillStyle = '#ffd740'; ctx.strokeStyle = '#7a5b00'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x, y, 15, 0, 7); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#4a3800'; ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(m.active === 'delivery' && m.phase === 'pickup' ? '▣' : '◎', x, y + 1);
+  const job = m.active;
+  m.timer -= dt;
+  if (m.timer <= 0) { finish(S, false); return; }
+  if (job.id === 'race') {
+    const cp = m.checkpoints[m.cpIdx];
+    S.objective = `Bay Run — checkpoint ${m.cpIdx + 1}/${m.checkpoints.length} · ${Math.ceil(m.timer)}s`;
+    if (cp && dist(p.x, p.y, cp.x, cp.y) < 78) {
+      m.cpIdx++; S.audio.cash(); S.cash += 25;
+      for (let i = 0; i < 8; i++) S.parts.push({ x: cp.x, y: cp.y, vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160, life: 0.5, max: 0.5, size: 4, color: '62,198,216', kind: 'spark' });
+      if (m.cpIdx >= m.checkpoints.length) finish(S, true);
+    }
+  } else if (job.id === 'delivery') {
+    if (!m.hasPackage) {
+      S.objective = `Special Delivery — pick up the package · ${Math.ceil(m.timer)}s`;
+      if (dist(p.x, p.y, m.target.x, m.target.y) < 52) {
+        m.hasPackage = true; m.target = { x: 2855, y: 455 }; // garage, north-east
+        addCrime(S, 34, p.x, p.y); // carrying runs hot: wanted +~1
+        S.phoneMsg('Marisol Vega', 'That is the package. North-east garage, and do not stop for anyone.');
+        S.audio.cash();
+      }
+    } else {
+      const d = Math.round(dist(p.x, p.y, m.target.x, m.target.y));
+      S.objective = `Special Delivery — drop it at the garage · ${d}m · ${Math.ceil(m.timer)}s`;
+      if (d < 56) finish(S, true);
+    }
+  } else {
+    S.objective = `Rampage — chaos ${Math.floor(m.chaos)}/${m.scoreNeed} · ${Math.ceil(m.timer)}s`;
+    if (m.chaos >= m.scoreNeed) finish(S, true);
   }
 }
+export function addChaos(S, pts, label) {
+  const m = S.missions;
+  if (!m.active || m.active.id !== 'rampage') return;
+  m.chaos += pts;
+  if (label) S.floaters.push({ x: S.player.x, y: S.player.y - 34, text: `+${pts} ${label}`, life: 1.1, color: '#ffd23f' });
+}
+export function checkNearMiss(S) {
+  const m = S.missions, pc = S.player.car;
+  if (!pc || m.nearMissCd > 0) return;
+  const spd = Math.hypot(pc.vx, pc.vy);
+  if (spd < 240) return;
+  for (const c of S.cars) {
+    if (c === pc) continue;
+    const d = dist(pc.x, pc.y, c.x, c.y);
+    if (d > 34 && d < 62) { m.nearMissCd = 0.9; addChaos(S, 40, 'NEAR MISS'); S.score += 2; break; }
+  }
+}
+export { JOBS };

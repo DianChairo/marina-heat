@@ -1,18 +1,10 @@
-// storage.js — persistent profile in localStorage: cash, respect, lifetime bests.
+// storage.js — localStorage save: cash, respect/score, best stats.
 const KEY = 'marina-heat-save-v1';
 export function loadSave() {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      return { cash: s.cash | 0, respect: s.respect | 0, bestChaos: s.bestChaos | 0, missionsDone: s.missionsDone | 0, runs: s.runs | 0 };
-    }
-  } catch { /* corrupted or unavailable storage: start fresh */ }
-  return { cash: 0, respect: 0, bestChaos: 0, missionsDone: 0, runs: 0 };
+  try { const s = JSON.parse(localStorage.getItem(KEY) || 'null'); if (s && typeof s.cash === 'number') return s; } catch { /* fresh */ }
+  return null;
 }
-export function storeSave(s) {
-  try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* private mode etc. */ }
+export function writeSave(data) {
+  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* private mode */ }
 }
-export function hasSave() {
-  try { return !!localStorage.getItem(KEY); } catch { return false; }
-}
+export function clearSave() { try { localStorage.removeItem(KEY); } catch { /* noop */ } }
