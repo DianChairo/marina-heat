@@ -1,30 +1,40 @@
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body { width: 100%; height: 100%; overflow: hidden; background: #0b1220; font-family: 'Segoe UI', system-ui, sans-serif; }
-#game { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
-#title {
-  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(160deg, rgba(255,120,60,0.25), rgba(10,16,30,0.82) 55%, rgba(22,104,168,0.5));
-  z-index: 10;
-}
-#title .card {
-  max-width: 620px; width: calc(100% - 40px); text-align: center; color: #eef4f8;
-  background: rgba(8, 13, 22, 0.88); border: 2px solid #ff9046; border-radius: 18px;
-  padding: 34px 38px 26px; box-shadow: 0 24px 70px rgba(0,0,0,0.6);
-}
-.kicker { letter-spacing: 4px; font-size: 12px; color: #3ec6d8; font-weight: 700; }
-#title h1 { font-size: 62px; line-height: 1; margin: 10px 0 12px; font-style: italic; color: #fff; text-shadow: 0 4px 0 #c2431f; }
-#title h1 span { color: #ffd23f; }
-.blurb { font-size: 15.5px; line-height: 1.55; color: #d7e3ec; }
-.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; margin: 20px auto 6px; max-width: 480px; font-size: 13.5px; text-align: left; color: #b9c9d6; }
-.controls b { color: #ffd23f; }
-.btns { margin-top: 18px; display: flex; gap: 12px; justify-content: center; }
-button {
-  font-size: 18px; font-weight: 800; letter-spacing: 1px; padding: 13px 30px; border: none; border-radius: 10px;
-  background: linear-gradient(180deg, #ffb03a, #ff6b35); color: #20100a; cursor: pointer;
-  box-shadow: 0 6px 0 #a83c14, 0 12px 24px rgba(0,0,0,0.45);
-}
-button:hover { filter: brightness(1.1); }
-button:active { transform: translateY(3px); box-shadow: 0 3px 0 #a83c14; }
-#continueBtn { background: linear-gradient(180deg, #7bf1a8, #2a9d8f); box-shadow: 0 6px 0 #14532d, 0 12px 24px rgba(0,0,0,0.45); color: #06231a; }
-#saveInfo { margin-top: 12px; font-size: 13px; color: #7bf1a8; min-height: 16px; }
-.foot { margin-top: 14px; font-size: 11.5px; color: #7e93a5; }
+/* Marina Heat — HUD + screens. Dark glass panels over the canvas. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0a1410; font-family: 'Segoe UI', system-ui, sans-serif; }
+#game { position: fixed; inset: 0; display: block; cursor: crosshair; }
+#loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; background: #0a1410; z-index: 50; font-size: 20px; }
+
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+#hud-top { position: absolute; top: 12px; left: 12px; right: 210px; display: flex; align-items: center; gap: 16px; }
+#health-wrap { position: relative; width: 220px; height: 22px; background: rgba(0,0,0,0.6); border: 1px solid #555; border-radius: 4px; overflow: hidden; }
+#health-fill { height: 100%; width: 100%; background: #37d67a; transition: width 0.15s; }
+#health-text { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+#stars { font-size: 26px; letter-spacing: 2px; color: #888; text-shadow: 0 0 6px #000; }
+#cash { display: flex; flex-direction: column; color: #fff; text-shadow: 0 1px 3px #000; }
+#money { font-size: 22px; font-weight: 800; color: #37d67a; }
+#score { font-size: 12px; letter-spacing: 1px; color: #ddd; }
+#busted-wrap { position: absolute; top: 46px; left: 12px; width: 220px; height: 18px; background: rgba(0,0,0,0.6); border: 1px solid #d84a4a; border-radius: 4px; overflow: hidden; display: none; }
+#busted-fill { height: 100%; width: 0%; background: #d84a4a; }
+#busted-wrap span { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 11px; font-weight: 700; }
+#mission-box { position: absolute; top: 76px; left: 12px; background: rgba(0,0,0,0.65); border-left: 4px solid #ffd94a; padding: 8px 12px; border-radius: 4px; color: #fff; display: none; max-width: 340px; }
+#mission-name { font-size: 16px; font-weight: 800; color: #ffd94a; }
+#mission-info { font-size: 13px; color: #eee; margin-top: 2px; }
+#messages { position: absolute; left: 12px; bottom: 44px; max-width: 420px; display: flex; flex-direction: column; gap: 6px; }
+.msg { background: rgba(0,0,0,0.65); color: #fff; padding: 7px 10px; border-radius: 6px; font-size: 13px; border-left: 3px solid #e84a8a; }
+.msg b { color: #ff8ab8; }
+#controls-hint { position: absolute; bottom: 10px; left: 12px; color: rgba(255,255,255,0.75); font-size: 11px; text-shadow: 0 1px 2px #000; }
+#btn-mute { position: absolute; right: 200px; bottom: 12px; pointer-events: auto; background: rgba(0,0,0,0.6); color: #fff; border: 1px solid #666; border-radius: 4px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+#minimap { position: fixed; right: 12px; top: 12px; width: 180px; height: 180px; border: 2px solid rgba(255,255,255,0.6); border-radius: 6px; z-index: 11; background: #0a1410; }
+
+.screen { position: fixed; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: rgba(5, 15, 10, 0.82); z-index: 20; color: #fff; text-align: center; padding: 20px; }
+.screen h1 { font-size: 64px; font-weight: 900; letter-spacing: 6px; color: #ffd94a; text-shadow: 0 4px 0 #b3541e, 0 8px 24px #000; }
+.screen h1.red { color: #ff4a4a; text-shadow: 0 4px 0 #7a1010, 0 8px 24px #000; }
+.screen h1.blue { color: #4a8aff; text-shadow: 0 4px 0 #102a7a, 0 8px 24px #000; }
+.tagline { font-size: 18px; color: #ff8ab8; margin-top: 6px; letter-spacing: 2px; }
+.desc { font-size: 16px; line-height: 1.6; color: #eee; margin-top: 18px; }
+.save-line { font-size: 13px; color: #37d67a; margin-top: 12px; display: none; }
+.buttons { display: flex; gap: 14px; margin-top: 26px; }
+.buttons button { pointer-events: auto; background: #ffd94a; color: #1a1a1a; border: none; border-radius: 6px; padding: 14px 28px; font-size: 18px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 0 #b3541e; }
+.buttons button:hover { background: #ffe47a; }
+.buttons button:active { transform: translateY(3px); box-shadow: 0 1px 0 #b3541e; }
+.keys { font-size: 13px; color: #bbb; margin-top: 26px; line-height: 1.7; }

@@ -1,111 +1,214 @@
-// city.js — Coral Marina: grid city data, collision, and all world rendering.
-import { makeRng, clamp } from './rng.js';
-export const WORLD = 3200, CELL = 400, ROAD = 110, BEACH_Y = 2880, WATER_Y = 3030;
-const PALETTES = [
-  ['#e8b4a0', '#c97e63'], ['#a8d8d8', '#6fa8a8'], ['#f2d492', '#d9a94e'], ['#d9a7c7', '#a96f97'],
-  ['#b5c99a', '#7d9b5e'], ['#f4f1de', '#cfc9a8'], ['#e07a5f', '#b0502f'], ['#81b29a', '#557a67'],
-  ['#f2cc8f', '#c99b45'], ['#9db4db', '#64799e'],
-];
-export function createCity(seed) {
-  const rng = makeRng(seed * 7919 + 13);
-  const buildings = [], props = [];
-  for (let bx = 0; bx < 8; bx++) for (let by = 0; by < 8; by++) {
-    const x0 = bx * CELL + ROAD, y0 = by * CELL + ROAD, w = CELL - ROAD, h = CELL - ROAD;
-    if (y0 > BEACH_Y - 60) continue; // beach blocks stay open sand
-    const n = rng.int(1, 3);
-    for (let i = 0; i < n; i++) {
-      const bw = w / n - 14, bh = rng.range(h * 0.45, h * 0.85);
-      const pal = PALETTES[rng.int(0, PALETTES.length - 1)];
-      buildings.push({
-        x: x0 + 7 + i * (w / n), y: y0 + rng.range(4, h - bh - 4), w: bw, h: bh,
-        wall: pal[0], roof: pal[1], floors: Math.max(2, (bh / 26) | 0), seed: rng.int(1, 99999),
-        shop: rng.chance(0.35),
-      });
-    }
-    for (let i = 0; i < 4; i++) props.push({ kind: rng.pick(['palm', 'lamp', 'hydrant', 'palm']), x: x0 - 16, y: y0 + rng.range(0, h) });
-    for (let i = 0; i < 3; i++) props.push({ kind: rng.pick(['palm', 'lamp']), x: x0 + w + 14, y: y0 + rng.range(0, h) });
+// city.js — Coral Marina: a seeded 3200x3200 grid city on the coast.
+// West edge is ocean + sand beach; inland is a road grid with building
+// blocks, a few parks, a marina pier and a downtown core near the centre.
+import { makeRng } from './rng.js';
+
+export const CITY_SIZE = 3200;
+export const WATER_EDGE = 170;
+export const SAND_EDGE = 235;
+export const ROAD_WIDTH = 64;
+export const ROAD_STEP = 320;
+
+const ROOF_COLORS = ['#b0563a', '#7a6a8f', '#4f7d6b', '#8f7a4f', '#5d6f8f', '#96604f', '#6b8f5d', '#8f5d6b'];
+const WALL_COLORS = ['#c9b8a3', '#b8a89a', '#a8b0b8', '#c2a98f', '#9aa78f'];
+
+export function buildCity(seed) {
+  const rng = makeRng(seed);
+  const roadsV = [];
+  const roadsH = [];
+  for (let p = ROAD_STEP; p < CITY_SIZE; p += ROAD_STEP) {
+    roadsV.push(p);
+    roadsH.push(p);
   }
-  for (let x = 60; x < WORLD; x += 130) props.push({ kind: 'palm', x, y: BEACH_Y + rng.range(10, 110) });
-  return { buildings, props, W: WORLD, H: WORLD };
-}
-export const onRoadX = (x) => (x % CELL) < ROAD;
-export const onRoadY = (y) => (y % CELL) < ROAD;
-export const isRoad = (x, y) => onRoadX(x) || onRoadY(y) || y > BEACH_Y;
-export const isWater = (x, y) => y > WATER_Y;
-export function collideCircle(city, x, y, r) {
-  // push a circle out of every building rect it overlaps; returns corrected [x,y,hit]
-  let hit = false;
-  for (const b of city.buildings) {
-    const nx = clamp(x, b.x, b.x + b.w), ny = clamp(y, b.y, b.y + b.h);
-    const dx = x - nx, dy = y - ny, d2 = dx * dx + dy * dy;
-    if (d2 < r * r) {
-      hit = true;
-      if (d2 > 0.01) { const d = Math.sqrt(d2); x = nx + (dx / d) * r; y = ny + (dy / d) * r; }
-      else { // centre inside: push out the nearest face
-        const l = x - b.x, rr = b.x + b.w - x, t = y - b.y, bb = b.y + b.h - y, m = Math.min(l, rr, t, bb);
-        if (m === l) x = b.x - r; else if (m === rr) x = b.x + b.w + r; else if (m === t) y = b.y - r; else y = b.y + b.h + r;
+  const buildings = [];
+  const parks = [];
+  const trees = [];
+  // Blocks between neighbouring roads (and the beach strip / east edge).
+  const bounds = [SAND_EDGE + 30, ...roadsV, CITY_SIZE - 20];
+  for (let bi = 0; bi < bounds.length - 1; bi++) {
+    for (let bj = 0; bj < bounds.length - 1; bj++) {
+      const x0 = bounds[bi] + ROAD_WIDTH / 2 + 14;
+      const x1 = bounds[bi + 1] - ROAD_WIDTH / 2 - 14;
+      const y0 = bounds[bj] + ROAD_WIDTH / 2 + 14;
+      const y1 = bounds[bj + 1] - ROAD_WIDTH / 2 - 14;
+      if (x1 - x0 < 90 || y1 - y0 < 90) continue;
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      const downtown = Math.hypot(cx - 1600, cy - 1600) < 620;
+      if (rng.chance(0.14)) {
+        parks.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+        const n = rng.int(4, 9);
+        for (let t = 0; t < n; t++) {
+          trees.push({ x: rng.range(x0 + 12, x1 - 12), y: rng.range(y0 + 12, y1 - 12), r: rng.range(7, 13) });
+        }
+        continue;
+      }
+      const count = downtown ? rng.int(2, 4) : rng.int(1, 3);
+      for (let k = 0; k < count; k++) {
+        const w = rng.range(70, Math.min(150, (x1 - x0) / count));
+        const h = rng.range(70, Math.min(150, y1 - y0));
+        const x = rng.range(x0, Math.max(x0 + 1, x1 - w));
+        const y = rng.range(y0, Math.max(y0 + 1, y1 - h));
+        buildings.push({
+          x, y, w, h,
+          roof: rng.pick(ROOF_COLORS),
+          wall: rng.pick(WALL_COLORS),
+          tall: downtown && rng.chance(0.5),
+        });
       }
     }
   }
-  return [clamp(x, r, WORLD - r), clamp(y, r, WORLD - r), hit];
+  // Marina pier jutting into the water at mid-height.
+  const pier = { x: 30, y: 1500, w: 150, h: 26 };
+  const docks = [];
+  for (let i = 0; i < 5; i++) docks.push({ x: 60 + i * 22, y: 1560 + (i % 2) * 40 });
+  return {
+    size: CITY_SIZE, seed, roadsV, roadsH, buildings, parks, trees, pier, docks,
+    spawn: { x: 480, y: 480 },
+    fixer: { x: 1600, y: 1560, name: 'Marisol Vega' },
+  };
 }
-function drawBuilding(ctx, b, t) {
-  ctx.fillStyle = b.roof; ctx.fillRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6);
-  ctx.fillStyle = b.wall; ctx.fillRect(b.x, b.y, b.w, b.h);
-  ctx.fillStyle = 'rgba(0,0,0,0.12)'; ctx.fillRect(b.x, b.y + b.h - 6, b.w, 6);
-  const rng = makeRng(b.seed);
-  const cols = Math.max(2, (b.w / 22) | 0);
-  for (let r = 0; r < b.floors; r++) for (let c = 0; c < cols; c++) {
-    const lit = rng() < 0.42;
-    ctx.fillStyle = lit ? 'rgba(255,214,120,0.95)' : 'rgba(40,60,80,0.55)';
-    ctx.fillRect(b.x + 6 + c * 22, b.y + 7 + r * 24, 12, 14);
-  }
-  if (b.shop) { ctx.fillStyle = '#e63946'; ctx.fillRect(b.x, b.y + b.h - 16, b.w, 10); ctx.fillStyle = '#fff'; ctx.fillRect(b.x, b.y + b.h - 16, b.w, 2); }
+
+export function isWaterAt(city, x, y) {
+  return x < WATER_EDGE || x > city.size || y < 0 || y > city.size;
 }
-function drawProp(ctx, p, t) {
-  if (p.kind === 'palm') {
-    ctx.strokeStyle = '#8a6b45'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + 3, p.y - 12); ctx.stroke();
-    ctx.strokeStyle = '#3f9e4d'; ctx.lineWidth = 2.5;
-    for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2 + t * 0.0004; ctx.beginPath(); ctx.moveTo(p.x + 3, p.y - 12); ctx.lineTo(p.x + 3 + Math.cos(a) * 11, p.y - 12 + Math.sin(a) * 6 - 3); ctx.stroke(); }
-    ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 2, 9, 4, 0, 0, 7); ctx.fill();
-  } else if (p.kind === 'lamp') {
-    ctx.fillStyle = '#444'; ctx.fillRect(p.x - 1.5, p.y - 10, 3, 12);
-    ctx.fillStyle = '#ffe9a3'; ctx.beginPath(); ctx.arc(p.x, p.y - 12, 3.5, 0, 7); ctx.fill();
-    ctx.fillStyle = 'rgba(255,233,163,0.18)'; ctx.beginPath(); ctx.arc(p.x, p.y - 12, 10, 0, 7); ctx.fill();
-  } else {
-    ctx.fillStyle = '#d23b3b'; ctx.fillRect(p.x - 3, p.y - 6, 6, 8); ctx.fillStyle = '#ffb3b3'; ctx.fillRect(p.x - 3, p.y - 6, 6, 2);
-  }
+
+export function isSandAt(city, x, y) {
+  return x >= WATER_EDGE && x < SAND_EDGE && y >= 0 && y <= city.size;
 }
-export function drawCity(ctx, city, cam, vw, vh, t) {
-  const x0 = cam.x - vw / 2 - 60, y0 = cam.y - vh / 2 - 60, x1 = cam.x + vw / 2 + 60, y1 = cam.y + vh / 2 + 60;
-  // ground: blocks grass/plaza
-  ctx.fillStyle = '#79a86b'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
-  // beach + water
-  ctx.fillStyle = '#f2dc9b'; ctx.fillRect(0, BEACH_Y, WORLD, WORLD - BEACH_Y);
-  const grad = ctx.createLinearGradient(0, WATER_Y, 0, WORLD);
-  grad.addColorStop(0, '#3ec6d8'); grad.addColorStop(1, '#1668a8');
-  ctx.fillStyle = grad; ctx.fillRect(0, WATER_Y, WORLD, WORLD - WATER_Y);
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
-  for (let i = 0; i < 12; i++) { const wy = WATER_Y + 14 + i * 14, off = Math.sin(t * 0.001 + i) * 22; ctx.beginPath(); ctx.moveTo(Math.max(0, x0) + off, wy); ctx.lineTo(Math.min(WORLD, x1) + off, wy); ctx.stroke(); }
-  // sidewalks
-  ctx.fillStyle = '#cfc8bb';
-  for (let i = 0; i <= 8; i++) { ctx.fillRect(i * CELL - 8, 0, ROAD + 16, WORLD); ctx.fillRect(0, i * CELL - 8, WORLD, ROAD + 16); }
-  // roads
-  ctx.fillStyle = '#3d4148';
-  for (let i = 0; i <= 8; i++) { if (i * CELL < WORLD) { ctx.fillRect(i * CELL, 0, ROAD, WORLD); ctx.fillRect(0, i * CELL, WORLD, ROAD); } }
-  // lane markings
-  ctx.strokeStyle = 'rgba(255,205,60,0.85)'; ctx.lineWidth = 3; ctx.setLineDash([18, 16]);
-  for (let i = 0; i < 8; i++) {
-    ctx.beginPath(); ctx.moveTo(i * CELL + ROAD / 2, 0); ctx.lineTo(i * CELL + ROAD / 2, WORLD); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, i * CELL + ROAD / 2); ctx.lineTo(WORLD, i * CELL + ROAD / 2); ctx.stroke();
+
+export function isRoadAt(city, x, y) {
+  const half = ROAD_WIDTH / 2;
+  for (const rx of city.roadsV) if (Math.abs(x - rx) < half) return true;
+  for (const ry of city.roadsH) if (Math.abs(y - ry) < half) return true;
+  return false;
+}
+
+// Push a circle out of any building it overlaps; returns corrected position.
+export function resolveBuildings(city, x, y, r) {
+  for (const b of city.buildings) {
+    const cx = Math.max(b.x, Math.min(x, b.x + b.w));
+    const cy = Math.max(b.y, Math.min(y, b.y + b.h));
+    const dx = x - cx;
+    const dy = y - cy;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < r * r) {
+      if (d2 > 0.0001) {
+        const d = Math.sqrt(d2);
+        x = cx + (dx / d) * r;
+        y = cy + (dy / d) * r;
+      } else {
+        x = b.x - r;
+      }
+    }
   }
-  ctx.setLineDash([]);
-  ctx.strokeStyle = 'rgba(255,255,255,0.65)'; ctx.lineWidth = 2;
-  for (let bx = 0; bx < 8; bx++) for (let by = 0; by < 8; by++) { // crosswalks at intersections
-    const ix = bx * CELL, iy = by * CELL;
-    if (ix > x1 || iy > y1 || ix + ROAD < x0 || iy + ROAD < y0) continue;
-    for (let s = 0; s < 5; s++) { ctx.beginPath(); ctx.moveTo(ix + 8 + s * 20, iy + ROAD + 3); ctx.lineTo(ix + 8 + s * 20, iy + ROAD + 13); ctx.stroke(); }
+  return { x, y };
+}
+
+export function clampToCity(city, x, y, margin = 24) {
+  return {
+    x: Math.max(WATER_EDGE + margin, Math.min(city.size - margin, x)),
+    y: Math.max(margin, Math.min(city.size - margin, y)),
+  };
+}
+
+// A random point on a road lane, with the lane's travel direction (radians).
+export function randomRoadPoint(rng, city) {
+  if (rng.chance(0.5)) {
+    const rx = rng.pick(city.roadsV);
+    const y = rng.range(ROAD_STEP, city.size - ROAD_STEP);
+    const dir = rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2;
+    return { x: rx + rng.range(-14, 14), y, angle: dir };
   }
-  for (const b of city.buildings) if (b.x + b.w > x0 && b.x < x1 && b.y + b.h > y0 && b.y < y1) drawBuilding(ctx, b, t);
-  for (const p of city.props) if (p.x > x0 && p.x < x1 && p.y > y0 && p.y < y1) drawProp(ctx, p, t);
+  const ry = rng.pick(city.roadsH);
+  const x = rng.range(ROAD_STEP, city.size - ROAD_STEP);
+  const dir = rng.chance(0.5) ? 0 : Math.PI;
+  return { x, y: ry + rng.range(-14, 14), angle: dir };
+}
+
+// A random sidewalk point (just off a road) for pedestrians.
+export function randomSidewalkPoint(rng, city) {
+  const p = randomRoadPoint(rng, city);
+  const off = ROAD_WIDTH / 2 + 16;
+  const nx = Math.cos(p.angle + Math.PI / 2) * off;
+  const ny = Math.sin(p.angle + Math.PI / 2) * off;
+  return { x: p.x + nx, y: p.y + ny };
+}
+
+export function drawCity(ctx, city, cam) {
+  const { x: vx, y: vy, w: vw, h: vh } = cam;
+  // Ground: grass inland, sand strip, ocean.
+  ctx.fillStyle = '#5d8a4a';
+  ctx.fillRect(vx, vy, vw, vh);
+  ctx.fillStyle = '#2f6fb2';
+  ctx.fillRect(vx, vy, Math.max(0, WATER_EDGE - vx), vh);
+  ctx.fillStyle = '#d9c184';
+  ctx.fillRect(Math.max(vx, WATER_EDGE), vy, Math.max(0, Math.min(SAND_EDGE, vx + vw) - Math.max(vx, WATER_EDGE)), vh);
+  // Parks.
+  ctx.fillStyle = '#4a7a3d';
+  for (const p of city.parks) ctx.fillRect(p.x, p.y, p.w, p.h);
+  // Roads.
+  ctx.fillStyle = '#3a3a40';
+  for (const rx of city.roadsV) ctx.fillRect(rx - ROAD_WIDTH / 2, 0, ROAD_WIDTH, city.size);
+  for (const ry of city.roadsH) ctx.fillRect(0, ry - ROAD_WIDTH / 2, city.size, ROAD_WIDTH);
+  // Centre dashes.
+  ctx.fillStyle = '#d8c95a';
+  for (const rx of city.roadsV) {
+    for (let y = 0; y < city.size; y += 48) ctx.fillRect(rx - 2, y, 4, 24);
+  }
+  for (const ry of city.roadsH) {
+    for (let x = 0; x < city.size; x += 48) ctx.fillRect(x, ry - 2, 24, 4);
+  }
+  // Sidewalks: pale strips along each road.
+  ctx.fillStyle = 'rgba(200,200,190,0.55)';
+  for (const rx of city.roadsV) {
+    ctx.fillRect(rx - ROAD_WIDTH / 2 - 10, 0, 8, city.size);
+    ctx.fillRect(rx + ROAD_WIDTH / 2 + 2, 0, 8, city.size);
+  }
+  for (const ry of city.roadsH) {
+    ctx.fillRect(0, ry - ROAD_WIDTH / 2 - 10, city.size, 8);
+    ctx.fillRect(0, ry + ROAD_WIDTH / 2 + 2, city.size, 8);
+  }
+  // Buildings with roof + wall edge + tall shadow.
+  for (const b of city.buildings) {
+    if (b.tall) {
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.fillRect(b.x + 8, b.y + 10, b.w, b.h);
+    }
+    ctx.fillStyle = b.wall;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = b.roof;
+    ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, 6);
+  }
+  // Trees.
+  for (const t of city.trees) {
+    ctx.fillStyle = '#2f6b2f';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#3f8a3f';
+    ctx.beginPath();
+    ctx.arc(t.x - 2, t.y - 2, t.r * 0.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Marina pier + moored boats.
+  ctx.fillStyle = '#8a6a4a';
+  ctx.fillRect(city.pier.x, city.pier.y, city.pier.w, city.pier.h);
+  ctx.fillStyle = '#e8e8e8';
+  for (const d of city.docks) {
+    ctx.beginPath();
+    ctx.ellipse(d.x, d.y, 14, 6, 0.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Fixer's spot: pink awning marker at the marina office.
+  ctx.fillStyle = '#e84a8a';
+  ctx.beginPath();
+  ctx.arc(city.fixer.x, city.fixer.y, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('M', city.fixer.x, city.fixer.y + 4);
 }

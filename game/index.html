@@ -3,34 +3,75 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Marina Heat — Coral Marina's open-world crime game</title>
-<link rel="stylesheet" href="style.css">
+<title>Marina Heat — Coral Marina</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="./style.css">
 </head>
 <body>
+<div id="loading">Loading Coral Marina…</div>
 <canvas id="game"></canvas>
-<div id="title">
-  <div class="card">
-    <div class="kicker">CORAL MARINA · EST. TROUBLE</div>
-    <h1>MARINA <span>HEAT</span></h1>
-    <p class="blurb">Sun, salt and sirens. You are a wheelman-for-hire in Coral Marina, a neon
-    beach city that never checks your references. Fixer <b>Marisol Vega</b> has jobs — checkpoint
-    runs, hot packages, loud messages — and the Marina PD has opinions. Steal cars, dodge stars,
-    stack cash, build a name.</p>
-    <div class="controls">
-      <div><b>WASD / arrows</b> move &amp; drive</div>
-      <div><b>Mouse</b> aim · <b>click</b> shoot</div>
-      <div><b>E</b> steal / exit car · take a job</div>
-      <div><b>Shift</b> sprint · <b>Space</b> drift</div>
-      <div><b>P / Esc</b> pause · <b>M</b> mute · <b>R</b> restart</div>
+
+<div id="hud">
+  <div id="hud-top">
+    <div id="health-wrap">
+      <div id="health-fill"></div>
+      <span id="health-text">100 HP</span>
     </div>
-    <div class="btns">
-      <button id="startBtn">▶ START ENGINE</button>
-      <button id="continueBtn" style="display:none">CONTINUE</button>
+    <div id="stars">☆☆☆☆☆</div>
+    <div id="cash">
+      <span id="money">$0</span>
+      <span id="score">SCORE 0</span>
     </div>
-    <div id="saveInfo"></div>
-    <div class="foot">An original game — its own city, people and story. No downloads, no network, just drive.</div>
+  </div>
+  <div id="busted-wrap"><div id="busted-fill"></div><span>BUSTED</span></div>
+  <div id="mission-box">
+    <div id="mission-name"></div>
+    <div id="mission-info"></div>
+  </div>
+  <div id="messages"></div>
+  <div id="controls-hint">WASD move · mouse aim · click shoot · E steal car · Shift sprint · Space drift · 1/2/3 jobs · P pause · M mute</div>
+  <button id="btn-mute">🔊 Sound</button>
+</div>
+<canvas id="minimap" width="180" height="180"></canvas>
+
+<div id="screen-title" class="screen">
+  <h1>MARINA HEAT</h1>
+  <p class="tagline">Coral Marina — a top-down open-world crime story</p>
+  <p class="desc">Steal cars. Outrun the law. Work for Marisol Vega.<br>
+  Three jobs, five wanted stars, one city that never sleeps.</p>
+  <p id="title-save" class="save-line"></p>
+  <div class="buttons">
+    <button id="btn-start">▶ New Game</button>
+    <button id="btn-continue">↻ Continue</button>
+  </div>
+  <p class="keys">WASD move · mouse aim · click to shoot · E steal / exit car · Shift sprint<br>
+  Space handbrake drift · 1 / 2 / 3 take a job · P pause · M mute</p>
+</div>
+
+<div id="screen-pause" class="screen">
+  <h1>PAUSED</h1>
+  <p class="desc">Coral Marina waits for no one. Except now.</p>
+  <div class="buttons">
+    <button id="btn-resume">▶ Resume</button>
   </div>
 </div>
-<script type="module" src="src/main.js"></script>
+
+<div id="screen-wasted" class="screen">
+  <h1 class="red">WASTED</h1>
+  <p class="desc">The marina keeps your money. Marisol keeps your number.</p>
+  <div class="buttons">
+    <button id="btn-restart">↻ Start Over</button>
+  </div>
+</div>
+
+<div id="screen-busted" class="screen">
+  <h1 class="blue">BUSTED</h1>
+  <p class="desc">The Coral Marina PD thanks you for your cooperation.<br>Bail is $150. The car is impounded.</p>
+  <div class="buttons">
+    <button id="btn-restart-busted">↻ Pay Bail &amp; Walk Free</button>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>

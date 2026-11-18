@@ -1,44 +1,31 @@
-// Marina Heat — hand-in program for the gta6-01 bounty (Node 22, standard library only).
-// Copies the playable game/ and its screenshots/ beside this file into the output directory
-// and writes dossier.json there with the vendored make.fun library, exactly as the kit asks.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
-import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+// main.ts — Marina Heat entrypoint (Node 22, standard library only).
+// Copies game/ and screenshots/ into the output directory and writes
+// dossier.json there, built from this repository by the kit's
+// vendor/makefun-game.ts buildDossier.
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const GAME_TITLE = 'Marina Heat — an original open-world crime game in Coral Marina';
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+const outDir = resolve(process.env.MAKEFUN_OUTPUT_DIR || 'out');
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) {
-  cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+rmSync(outDir, { recursive: true, force: true });
+mkdirSync(outDir, { recursive: true });
+
+for (const name of ['game', 'screenshots']) {
+  const src = join(repoRoot, name);
+  if (!existsSync(src)) throw new Error(`main.ts: missing ${name}/ in ${repoRoot}`);
+  cpSync(src, join(outDir, name), { recursive: true });
 }
 
-function countFiles(dir: string): number {
-  let n = 0;
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    n += entry.isDirectory() ? countFiles(join(dir, entry.name)) : 1;
-  }
-  return n;
-}
-const copied = countFiles(join(out, 'game')) + countFiles(join(out, 'screenshots'));
-console.log(`[marina-heat] handing in "${GAME_TITLE}"`);
-console.log(`[marina-heat] copied ${copied} files (game/ + screenshots/) to ${out}`);
+const dossier = buildDossier(repoRoot, {
+  text_max_bytes: 160 * 1024,
+  screenshots: { max: 4, max_bytes: 256 * 1024 },
+  game_max_files: 993,
+  game_max_bytes: 48 * 1024 * 1024,
+});
+writeFileSync(join(outDir, 'dossier.json'), dossier);
 
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, {
-    text_max_bytes: 163840,
-    screenshots: { max: 4, max_bytes: 262144 },
-    game_max_files: 993,
-    game_max_bytes: 50331648,
-    game_path_max_bytes: 1000,
-  }),
-);
-console.log('[marina-heat] dossier.json written — see you on the leaderboard.');
+console.log(`Marina Heat: wrote ${outDir}`);
+console.log(`dossier.json: ${dossier.length} bytes`);

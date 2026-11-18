@@ -1,61 +1,94 @@
-// shots.js — deterministic screenshot scenes: ?shot=<name>&seed=<n> builds a frozen-in-action state.
-import { makeCar } from './vehicles.js';
-import { makePed } from './pedestrians.js';
-import { MARKER } from './missions.js';
-export function isShotMode() { return new URLSearchParams(location.search).has('shot'); }
-export function shotName() { return new URLSearchParams(location.search).get('shot') || ''; }
-export function shotSeed() { const n = parseInt(new URLSearchParams(location.search).get('seed') || '7', 10); return Number.isFinite(n) ? n : 7; }
-function addTraffic(S, x, y, a, color, dir) { const c = makeCar(x, y, a, color, 'traffic'); c.driver = 'npc'; c.dir = dir; c.vx = Math.cos(a) * 130; c.vy = Math.sin(a) * 130; S.cars.push(c); return c; }
-function addCop(S, x, y, tx, ty) { const c = makeCar(x, y, Math.atan2(ty - y, tx - x), '#f4f6f8', 'cop'); c.driver = 'cop'; c.hp = 130; c.vx = Math.cos(c.a) * 210; c.vy = Math.sin(c.a) * 210; S.cars.push(c); return c; }
-function crowd(S, cx, cy, n) { for (let i = 0; i < n; i++) { const p = makePed(cx + ((i * 53) % 170) - 85, cy + ((i * 37) % 120) - 60, S.rng); p.a = (i * 1.3) % 6.28; S.peds.push(p); } }
-export function setupShot(S, name) {
-  const p = S.player;
-  S.mode = 'play';
-  if (name === '1-cover.jpg') {
-    S.golden = true;
-    p.x = 600; p.y = 700; p.a = -0.5;
-    addTraffic(S, 380, 879, 0, '#e63946', 0); addTraffic(S, 950, 879, 0, '#457b9d', 0);
-    addTraffic(S, 1050, 831, Math.PI, '#f4a261', 2); addTraffic(S, 250, 831, Math.PI, '#2a9d8f', 2);
-    addTraffic(S, 879, 300, Math.PI / 2, '#e9c46a', 1); addTraffic(S, 431, 1080, -Math.PI / 2, '#9b5de5', 3);
-    crowd(S, 560, 790, 7); crowd(S, 760, 560, 4);
-    S.objective = 'Go to the M marker downtown to work for Marisol.';
-    S.phoneMsg('Marisol Vega', 'Welcome to Coral Marina. I have work for someone who can drive. Come see me downtown.');
-    S.cash = 240; S.score = 15;
-  } else if (name === '2-drive.jpg') {
-    p.x = 900; p.y = 879;
-    const car = makeCar(p.x, p.y, 0, '#e63946', 'player'); car.driver = 'player'; car.vx = 330; car.speed = 330;
-    S.cars.push(car); p.car = car;
-    addTraffic(S, 1350, 831, Math.PI, '#457b9d', 2); addTraffic(S, 560, 879, 0, '#f4a261', 0);
-    addTraffic(S, 1279, 560, Math.PI / 2, '#2a9d8f', 1); addTraffic(S, 1231, 1180, -Math.PI / 2, '#9b5de5', 3);
-    crowd(S, 1020, 960, 4);
-    S.objective = 'Free roam — Marisol is waiting at the M marker.';
-    S.cash = 690; S.score = 45;
-  } else if (name === '3-chase.jpg') {
-    p.x = 1400; p.y = 1679;
-    const car = makeCar(p.x, p.y, 0, '#118ab2', 'player'); car.driver = 'player'; car.vx = 300; car.speed = 300; car.hp = 62;
-    S.cars.push(car); p.car = car;
-    addCop(S, 1040, 1679, p.x, p.y); addCop(S, 1100, 1631, p.x, p.y); addCop(S, 1180, 1560, p.x, p.y);
-    addTraffic(S, 1980, 1631, Math.PI, '#e9c46a', 2);
-    crowd(S, 1560, 1560, 3);
-    S.wanted = 4; S.heat = 62; S.busted = 38; S.seenByCop = true;
-    S.objective = 'Lose the heat — break line of sight to cool your stars.';
-    S.phoneMsg('Marisol Vega', 'Four stars?! Ditch them in the alleys by the bay, NOW.');
-    S.cash = 1250; S.score = 120;
-  } else if (name === '4-mission.jpg') {
-    p.x = 900; p.y = 1279;
-    const car = makeCar(p.x, p.y, 0, '#06d6a0', 'player'); car.driver = 'player'; car.vx = 210; car.speed = 210;
-    S.cars.push(car); p.car = car;
-    const m = S.missions;
-    m.active = { id: 'delivery', name: 'Special Delivery', pay: 600, respect: 40 };
-    m.hasPackage = true; m.target = { x: 2855, y: 455 }; m.timer = 96;
-    S.wanted = 2; S.heat = 30;
-    addCop(S, 660, 1330, p.x, p.y);
-    addTraffic(S, 1420, 1231, Math.PI, '#ef476f', 2);
-    crowd(S, 980, 1180, 4);
-    S.objective = 'Special Delivery — drop it at the garage · 1980m · 96s';
-    S.phoneMsg('Marisol Vega', 'That is the package. North-east garage, and do not stop for anyone.');
-    S.cash = 840; S.score = 85;
-  }
-  S.cam.x = p.x; S.cam.y = p.y;
+// shots.js — deterministic screenshot scenes for the entry's images.
+// ?shot=cover|drive|chase|mission&seed=n seeds the RNG, then scripts the
+// world into a fixed state: same seed, same picture. main.js sets
+// window.__shotReady once the scene has rendered a few frames.
+import { startMission } from './missions.js';
+import { addHeat, spawnPoliceCar } from './police.js';
+import { createCar } from './vehicles.js';
+import { initTraffic, spawnTrafficCar } from './traffic.js';
+import { initPeds } from './pedestrians.js';
+
+export const SHOT_NAMES = ['cover', 'drive', 'chase', 'mission'];
+
+export function parseShot() {
+  const params = new URLSearchParams(window.location.search);
+  const shot = params.get('shot');
+  if (!SHOT_NAMES.includes(shot)) return null;
+  const seedRaw = params.get('seed');
+  const seed = seedRaw === null ? 7 : Number(seedRaw) || 7;
+  return { shot, seed };
 }
-export { MARKER };
+
+// Place the player on foot in the downtown core with traffic and crowds.
+function sceneCover(G) {
+  G.player.x = 1620;
+  G.player.y = 1580;
+  G.player.onFoot = true;
+  G.player.car = null;
+  G.player.angle = -0.6;
+  G.camera.x = G.player.x - G.camera.w / 2;
+  G.camera.y = G.player.y - G.camera.h / 2;
+}
+
+// Player behind the wheel on a main road, mid-drive.
+function sceneDrive(G) {
+  const car = createCar(1000, 1000, 0, '#d84a4a', 'player');
+  car.speed = 240;
+  car.driver = 'player';
+  G.cars.push(car);
+  G.player.onFoot = false;
+  G.player.car = car;
+  G.player.x = car.x;
+  G.player.y = car.y;
+  G.player.angle = 0;
+  // A few cars ahead on the same road.
+  for (let i = 0; i < 3; i++) {
+    const c = createCar(1180 + i * 160, 1000 + (i % 2) * 8, 0, ['#4a7ad8', '#e8c33a', '#4ad88a'][i], 'traffic');
+    c.speed = 130;
+    G.cars.push(c);
+  }
+}
+
+// Wanted level 3, police cars closing in on the player's car.
+function sceneChase(G) {
+  sceneDrive(G);
+  addHeat(G, 55);
+  const p = G.player;
+  const spots = [
+    { x: p.x - 260, y: p.y - 60, a: 0.2 },
+    { x: p.x - 300, y: p.y + 90, a: -0.15 },
+    { x: p.x + 180, y: p.y - 190, a: Math.PI * 0.75 },
+    { x: p.x - 120, y: p.y + 220, a: -Math.PI * 0.6 },
+  ];
+  for (const s of spots) {
+    const cop = createCar(s.x, s.y, s.a, '#1a2a4a', 'police');
+    cop.speed = 300;
+    G.cars.push(cop);
+  }
+  void spawnPoliceCar;
+}
+
+// Mission 1 (Bay Run) in progress: checkpoint rings visible ahead.
+function sceneMission(G) {
+  sceneDrive(G);
+  G.player.car.x = 640;
+  G.player.car.y = 640;
+  G.player.car.angle = Math.PI / 2;
+  G.player.x = 640;
+  G.player.y = 640;
+  startMission(G, 0);
+  // Put the first checkpoint just ahead so the ring reads in-frame.
+  G.mission.checkpoints[0] = { x: 640, y: 960, r: 46, hit: false };
+}
+
+export function applyShot(G, name) {
+  G.shot = name;
+  // A busy street in every shot: refill traffic and pedestrians near the player.
+  initTraffic(G, 6);
+  initPeds(G, 10);
+  if (name === 'cover') sceneCover(G);
+  else if (name === 'drive') sceneDrive(G);
+  else if (name === 'chase') sceneChase(G);
+  else if (name === 'mission') sceneMission(G);
+  G.state = 'playing';
+}

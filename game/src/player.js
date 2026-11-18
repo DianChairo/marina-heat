@@ -1,72 +1,131 @@
-// player.js — on-foot movement, aim, car entry/exit, drawing, health regen.
-import { clamp, dist } from './rng.js';
-import { collideCircle, isWater } from './city.js';
-export function makePlayer(x, y) {
-  return { x, y, vx: 0, vy: 0, a: 0, r: 10, hp: 100, maxHp: 100, car: null, hurtT: 0, walkT: 0, dead: false, skin: '#f2c185', shirt: '#ff5964', pants: '#2b3a55' };
+// player.js — the on-foot player: WASD movement, sprint, mouse aim,
+// health, money and getting in and out of cars with E.
+import { clampToCity, resolveBuildings } from './city.js';
+import { isDown, moveVector, wasPressed } from './input.js';
+
+export function createPlayer(city, save) {
+  return {
+    x: save ? save.x : city.spawn.x,
+    y: save ? save.y : city.spawn.y,
+    angle: -Math.PI / 2,
+    hp: 100,
+    maxHp: 100,
+    money: save ? save.money : 0,
+    score: save ? save.score : 0,
+    onFoot: true,
+    car: null,
+    speed: 0,
+    sprinting: false,
+    shootCooldown: 0,
+    hurtFlash: 0,
+  };
 }
-export function updatePlayer(S, dt) {
-  const p = S.player, inp = S.input;
-  p.hurtT -= dt;
-  if (!p.car) {
-    const mx = inp.moveX(), my = inp.moveY();
-    const sprint = inp.down('ShiftLeft') || inp.down('ShiftRight');
-    const sp = (sprint ? 268 : 172) * (isWater(p.x, p.y) ? 0.45 : 1);
-    const len = Math.hypot(mx, my) || 1;
-    const tx = (mx / len) * (mx || my ? sp : 0), ty = (my / len) * (mx || my ? sp : 0);
-    p.vx += (tx - p.vx) * Math.min(1, dt * 12); p.vy += (ty - p.vy) * Math.min(1, dt * 12);
-    p.x += p.vx * dt; p.y += p.vy * dt;
-    const [nx, ny] = collideCircle(S.city, p.x, p.y, p.r); p.x = nx; p.y = ny;
-    if (mx || my) p.walkT += dt * (sprint ? 13 : 9);
-    // aim at mouse (screen -> world)
-    p.a = Math.atan2(S.cam.y + inp.mouse.y - S.vh / 2 - p.y, S.cam.x + inp.mouse.x - S.vw / 2 - p.x);
-    // car collisions while on foot: getting run over hurts
-    for (const c of S.cars) {
-      if (Math.hypot(c.vx, c.vy) > 60 && dist(p.x, p.y, c.x, c.y) < c.r + 6) {
-        p.hp -= 26 * dt * 3; p.hurtT = 1.2; S.shake = Math.min(10, S.shake + 3);
-        const d = Math.max(1, dist(p.x, p.y, c.x, c.y)); p.x += ((p.x - c.x) / d) * 26; p.y += ((p.y - c.y) / d) * 26;
+
+// Aim angle from the player to the mouse cursor (screen -> world).
+export function aimAngle(G) {
+  const p = G.player;
+  const wx = G.camera.x + G.input.mouse.x;
+  const wy = G.camera.y + G.input.mouse.y;
+  return Math.atan2(wy - p.y, wx - p.x);
+}
+
+export function updatePlayer(G, dt) {
+  const p = G.player;
+  const input = G.input;
+  if (p.shootCooldown > 0) p.shootCooldown -= dt;
+  if (p.hurtFlash > 0) p.hurtFlash -= dt;
+  if (!p.onFoot) return;
+  p.angle = aimAngle(G);
+  const mv = moveVector(input);
+  p.sprinting = isDown(input, 'ShiftLeft', 'ShiftRight') && (mv.x !== 0 || mv.y !== 0);
+  const speed = p.sprinting ? 260 : 165;
+  p.speed = (mv.x !== 0 || mv.y !== 0) ? speed : 0;
+  p.x += mv.x * speed * dt;
+  p.y += mv.y * speed * dt;
+  const fixed = resolveBuildings(G.city, p.x, p.y, 14);
+  p.x = fixed.x;
+  p.y = fixed.y;
+  const clamped = clampToCity(G.city, p.x, p.y, 20);
+  p.x = clamped.x;
+  p.y = clamped.y;
+  // E near a car: steal it. E while driving is handled in vehicles.js.
+  if (wasPressed(input, 'KeyE')) {
+    let best = null;
+    let bestD = 70;
+    for (const car of G.cars) {
+      if (car.kind === 'police') continue;
+      const d = Math.hypot(car.x - p.x, car.y - p.y);
+      if (d < bestD) {
+        bestD = d;
+        best = car;
       }
     }
-  } else {
-    p.x = p.car.x; p.y = p.car.y; p.a = p.car.a;
+    if (best) {
+      p.onFoot = false;
+      p.car = best;
+      best.kind = 'player';
+      best.driver = 'player';
+      G.stats.carsStolen++;
+      G.audio.blip(520, 0.12, 'square', 0.09);
+      pushMessage(G, 'You', 'Nice ride. It is yours now.');
+      // Consume the press so the driving update in the same frame does
+      // not read it as "bail out of the car".
+      input.pressed.delete('KeyE');
+    }
   }
-  if (p.hurtT <= 0 && p.hp > 0) p.hp = Math.min(p.maxHp, p.hp + 2.6 * dt); // slow regen
-  p.hp = clamp(p.hp, 0, p.maxHp);
-  if (p.hp <= 0 && !p.dead) { p.dead = true; S.mode = 'dead'; S.audio.sting(false); S.saveBest(); }
 }
-export function nearestCar(S, maxD) {
-  let best = null, bd = maxD;
-  for (const c of S.cars) { if (c.dead) continue; const d = dist(S.player.x, S.player.y, c.x, c.y); if (d < bd) { bd = d; best = c; } }
-  return best;
-}
-export function tryEnterExit(S) {
-  const p = S.player;
-  if (p.car) {
-    const c = p.car; p.car = null; c.driver = null; if (c.kind === 'player') c.kind = 'parked';
-    p.x = c.x + Math.cos(c.a - Math.PI / 2) * 30; p.y = c.y + Math.sin(c.a - Math.PI / 2) * 30;
-    const [nx, ny] = collideCircle(S.city, p.x, p.y, p.r); p.x = nx; p.y = ny;
-    S.audio.engine(0, false);
-    return;
+
+export function damagePlayer(G, amount) {
+  const p = G.player;
+  if (p.hp <= 0) return;
+  p.hp -= amount;
+  p.hurtFlash = 0.25;
+  if (p.hp <= 0) {
+    p.hp = 0;
+    G.state = 'wasted';
+    G.audio.busted();
   }
-  const c = nearestCar(S, 46);
-  if (!c) return;
-  const wasOccupied = c.kind === 'traffic' || c.kind === 'cop';
-  if (c.kind === 'traffic') { // driver flees screaming
-    const ped = S.spawnPed(c.x + 24, c.y + 10, true); if (ped) { ped.state = 'flee'; ped.fleeX = c.x - 200; ped.fleeY = c.y; ped.panic = 3; }
-  }
-  c.kind = 'player'; c.driver = 'player'; p.car = c; p.x = c.x; p.y = c.y;
-  S.audio.tone(220, 0.08, 'square', 0.12);
-  S.onCarStolen && S.onCarStolen(c, wasOccupied);
 }
-export function drawPlayer(ctx, p, t) {
-  if (p.car) return;
-  ctx.save(); ctx.translate(p.x, p.y);
-  ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0, 4, 9, 5, 0, 0, 7); ctx.fill();
-  const bob = Math.sin(p.walkT * 2) * 1.6;
-  ctx.rotate(p.a);
-  ctx.fillStyle = p.pants; ctx.fillRect(-3 + bob * 0.4, -7, 5, 6); ctx.fillRect(-3 - bob * 0.4, 1, 5, 6);
-  ctx.fillStyle = p.shirt; ctx.beginPath(); ctx.arc(0, 0, 8, 0, 7); ctx.fill();
-  ctx.fillStyle = p.skin; ctx.beginPath(); ctx.arc(1.5, 0, 5, 0, 7); ctx.fill();
-  ctx.fillStyle = '#20242c'; ctx.fillRect(6, -1.6, 11, 3.2); // gun
-  ctx.fillStyle = p.skin; ctx.fillRect(4, 4.5, 6, 3);
+
+export function healPlayer(G, amount) {
+  const p = G.player;
+  p.hp = Math.min(p.maxHp, p.hp + amount);
+}
+
+export function pushMessage(G, from, text) {
+  G.messages.unshift({ from, text, t: G.time });
+  if (G.messages.length > 5) G.messages.pop();
+}
+
+export function drawPlayer(ctx, G) {
+  const p = G.player;
+  if (!p.onFoot || p.hp <= 0) return;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.rotate(p.angle);
+  // Shadow.
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath();
+  ctx.ellipse(0, 4, 12, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Body: jacket + head + gun arm.
+  ctx.fillStyle = '#e84a3a';
+  ctx.beginPath();
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#f2c89a';
+  ctx.beginPath();
+  ctx.arc(4, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(10, -3, 14, 5);
+  ctx.fillStyle = '#444';
+  ctx.fillRect(20, -1.5, 8, 3);
   ctx.restore();
+  if (p.hurtFlash > 0) {
+    ctx.fillStyle = 'rgba(255,0,0,0.25)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
