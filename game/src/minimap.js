@@ -1,55 +1,90 @@
-// minimap.js — the corner minimap: the whole city scaled down, with the
-// player (green), police (blue), mission objective (gold) and the camera
-// viewport rectangle. Drawn top-left over the HUD.
-import { WORLD } from './city.js';
+// minimap.js — corner minimap: roads, water, the player arrow, nearby
+// cars, police (flashing), pedestrians and the mission checkpoint.
 
-export function drawMinimap(ctx, G) {
-  const S = 180; // minimap is 180x180
-  const scale = S / WORLD;
-  const x0 = 16; const y0 = 16;
+import { WORLD, CELL, ROAD, WATER_X, WATER_Y } from './city.js';
+
+const SIZE = 176;
+const PAD = 14;
+
+export function drawMinimap(ctx, world, vw, vh) {
+  const x0 = PAD;
+  const y0 = vh - SIZE - 64;
+  const scale = SIZE / WORLD;
   ctx.save();
-  ctx.fillStyle = '#0f172acc';
-  ctx.fillRect(x0 - 4, y0 - 4, S + 8, S + 8);
-  // water + sand
-  ctx.fillStyle = '#0e7490';
-  ctx.fillRect(x0, y0, 240 * scale + 2, S);
-  ctx.fillStyle = '#fde68a';
-  ctx.fillRect(x0 + 240 * scale, y0, 8, S);
-  // ground
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(x0 + 240 * scale + 8, y0, S - 240 * scale - 8, S);
-  // roads
-  ctx.fillStyle = '#64748b';
-  for (const rx of G.city.roadsV) ctx.fillRect(x0 + rx * scale - 1, y0, 2, S);
-  for (const ry of G.city.roadsH) ctx.fillRect(x0, y0 + ry * scale - 1, S, 2);
-  // buildings
-  ctx.fillStyle = '#94a3b8';
-  for (const b of G.city.buildings) {
-    ctx.fillRect(x0 + b.x * scale, y0 + b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+  ctx.beginPath();
+  ctx.roundRect(x0, y0, SIZE, SIZE, 10);
+  ctx.clip();
+  // Land + water.
+  ctx.fillStyle = '#cdb98a';
+  ctx.fillRect(x0, y0, SIZE, SIZE);
+  ctx.fillStyle = '#2e7fa8';
+  ctx.fillRect(x0 + WATER_X * scale, y0, SIZE - WATER_X * scale, SIZE);
+  ctx.fillRect(x0 + 2080 * scale, y0 + WATER_Y * scale, SIZE - 2080 * scale, SIZE - WATER_Y * scale);
+  // Roads.
+  ctx.fillStyle = '#4c4c52';
+  for (let g = 0; g <= WORLD / CELL; g++) {
+    const p = g * CELL * scale;
+    ctx.fillRect(x0 + p - (ROAD * scale) / 2, y0, ROAD * scale, SIZE);
+    ctx.fillRect(x0, y0 + p - (ROAD * scale) / 2, SIZE, ROAD * scale);
   }
-  // mission objective
-  if (G.mission) {
-    const t = G.mission.id === 0 ? G.mission.target
-      : G.mission.id === 1 ? (G.mission.stage === 0 ? G.mission.target : G.mission.target2) : null;
-    if (t) {
-      ctx.fillStyle = '#f59e0b';
-      ctx.beginPath(); ctx.arc(x0 + t.x * scale, y0 + t.y * scale, 5, 0, Math.PI * 2); ctx.fill();
-    }
+  const toMap = (x, y) => [x0 + x * scale, y0 + y * scale];
+
+  // Mission checkpoint.
+  const s = world.missions.active;
+  if (s && s.checkpoint) {
+    const [mx, my] = toMap(s.checkpoint.x, s.checkpoint.y);
+    ctx.fillStyle = '#ffe14d';
+    ctx.beginPath();
+    ctx.arc(mx, my, 4.5 + Math.sin(world.time * 5) * 1.2, 0, Math.PI * 2);
+    ctx.fill();
   }
-  // police
-  ctx.fillStyle = '#3b82f6';
-  for (const c of G.cars) {
-    if (!c.police || c.wrecked) continue;
-    ctx.beginPath(); ctx.arc(x0 + c.x * scale, y0 + c.y * scale, 3, 0, Math.PI * 2); ctx.fill();
+  // Pedestrians.
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  for (const ped of world.peds) {
+    if (ped.dead) continue;
+    const [mx, my] = toMap(ped.x, ped.y);
+    ctx.fillRect(mx - 1, my - 1, 2, 2);
   }
-  // player
-  ctx.fillStyle = '#22c55e';
-  ctx.beginPath(); ctx.arc(x0 + G.player.x * scale, y0 + G.player.y * scale, 4, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(x0 + G.player.x * scale, y0 + G.player.y * scale, 7, 0, Math.PI * 2); ctx.stroke();
-  // viewport rectangle
-  ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 1;
-  ctx.strokeRect(x0 + G.camera.x * scale, y0 + G.camera.y * scale,
-    G.view.w * scale, G.view.h * scale);
+  // Cars.
+  for (const car of world.cars) {
+    if (car.kind === 'police') continue;
+    const [mx, my] = toMap(car.x, car.y);
+    ctx.fillStyle = car.package ? '#ffe14d' : '#e8e8e8';
+    ctx.fillRect(mx - 2, my - 2, 4, 4);
+  }
+  // Police flash.
+  const flash = Math.floor(world.time * 3) % 2 === 0;
+  for (const cop of world.police) {
+    const [mx, my] = toMap(cop.car.x, cop.car.y);
+    ctx.fillStyle = flash ? '#ff4040' : '#4080ff';
+    ctx.beginPath();
+    ctx.arc(mx, my, 3.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Player arrow.
+  const p = world.player.pos;
+  const [px, py] = toMap(p.x, p.y);
+  const ang = world.player.inCar ? world.player.inCar.angle : world.player.angle;
+  ctx.translate(px, py);
+  ctx.rotate(ang);
+  ctx.fillStyle = '#ff6b4a';
+  ctx.beginPath();
+  ctx.moveTo(7, 0);
+  ctx.lineTo(-5, -4.5);
+  ctx.lineTo(-5, 4.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  // Border + label.
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,255,255,0.65)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.roundRect(x0, y0, SIZE, SIZE, 10);
+  ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = 'bold 10px system-ui, sans-serif';
+  ctx.fillText('CORAL MARINA', x0 + 8, y0 + 14);
   ctx.restore();
 }

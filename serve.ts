@@ -1,42 +1,60 @@
-// serve.ts — serves game/ at http://localhost:8080 for play-testing and
-// screenshots. Node stdlib only; no dependencies, no directory escape.
+// serve.ts — tiny Node standard-library static server for game/.
+// Usage: node serve.ts [--port 8080]  ->  http://localhost:8080
+
+import { createReadStream, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
-import { extname, join, normalize, resolve } from 'node:path';
+import { extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = resolve(join(fileURLToPath(import.meta.url), '..', 'game'));
-const PORT = Number(process.env.PORT || 8080);
+const root = resolve(fileURLToPath(new URL('./game', import.meta.url)));
+const args = process.argv.slice(2);
+const portIndex = args.indexOf('--port');
+const requested = portIndex === -1 ? 8080 : Number(args[portIndex + 1]);
+const port = Number.isInteger(requested) && requested > 0 && requested < 65536 ? requested : 8080;
 
-const TYPES = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
 };
 
-const server = createServer(async (req, res) => {
+createServer((request, response) => {
+  const url = new URL(request.url ?? '/', 'http://localhost');
+  let pathname: string;
   try {
-    const url = new URL(req.url || '/', 'http://localhost');
-    const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-    const file = normalize(join(root, rel));
-    if (!file.startsWith(root)) {
-      res.writeHead(403);
-      res.end('forbidden');
-      return;
-    }
-    const data = await readFile(file);
-    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] || 'application/octet-stream' });
-    res.end(data);
+    pathname = decodeURIComponent(url.pathname);
   } catch {
-    res.writeHead(404);
-    res.end('not found');
+    response.writeHead(400).end('bad request');
+    return;
   }
-});
-
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Marina Heat serving game/ at http://localhost:${PORT}`);
+  if (pathname.endsWith('/')) pathname += 'index.html';
+  const file = resolve(join(root, normalize(pathname)));
+  if (file !== root && !file.startsWith(root + sep)) {
+    response.writeHead(403).end('forbidden');
+    return;
+  }
+  let size: number;
+  try {
+    const stats = statSync(file);
+    if (!stats.isFile()) throw new Error('not a file');
+    size = stats.size;
+  } catch {
+    response.writeHead(404).end('not found');
+    return;
+  }
+  response.writeHead(200, {
+    'content-type': MIME[extname(file).toLowerCase()] ?? 'application/octet-stream',
+    'content-length': size,
+    'cache-control': 'no-store',
+  });
+  createReadStream(file).pipe(response);
+}).listen(port, '127.0.0.1', () => {
+  console.log(`Marina Heat game/ is on http://localhost:${port}`);
 });

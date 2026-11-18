@@ -1,28 +1,40 @@
-// main.ts — Marina Heat entrypoint (Node stdlib only).
+// Marina Heat — make.fun entrypoint (Node, standard library only).
+//
 // Copies game/ and screenshots/ into the output directory and writes
-// dossier.json via buildDossier from the kit's vendor/makefun-game.ts.
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+// dossier.json there with the vendored buildDossier.
+//
+// Round-6 fix: MAKEFUN_OUTPUT_DIR may be an ABSOLUTE path (the grader
+// passes /output on a read-only copy of this repo). The output path is
+// therefore resolved with resolve() — never join(), which would nest an
+// absolute path under the repo — and the directory's CONTENTS are
+// cleared entry by entry instead of removing the directory itself,
+// which the grader may have created and mounted for us.
+
+import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
+
 const outDir = process.env.MAKEFUN_OUTPUT_DIR
-  ? join(here, process.env.MAKEFUN_OUTPUT_DIR)
+  ? resolve(here, process.env.MAKEFUN_OUTPUT_DIR)
   : join(here, 'out');
 
-rmSync(outDir, { recursive: true, force: true });
 mkdirSync(outDir, { recursive: true });
-
-const gameSrc = join(here, 'game');
-if (!existsSync(gameSrc) || !statSync(gameSrc).isDirectory()) {
-  throw new Error('game/ directory missing');
+for (const entry of readdirSync(outDir)) {
+  rmSync(join(outDir, entry), { recursive: true, force: true });
 }
-cpSync(gameSrc, join(outDir, 'game'), { recursive: true });
 
-const shotsSrc = join(here, 'screenshots');
-if (existsSync(shotsSrc) && statSync(shotsSrc).isDirectory()) {
-  cpSync(shotsSrc, join(outDir, 'screenshots'), { recursive: true });
+const gameDir = join(here, 'game');
+if (!existsSync(join(gameDir, 'index.html'))) {
+  throw new Error(`game/index.html is missing next to main.ts (${gameDir})`);
+}
+cpSync(gameDir, join(outDir, 'game'), { recursive: true });
+
+const shotsDir = join(here, 'screenshots');
+if (existsSync(shotsDir)) {
+  cpSync(shotsDir, join(outDir, 'screenshots'), { recursive: true });
 }
 
 const dossier = buildDossier(outDir, {
@@ -34,10 +46,11 @@ const dossier = buildDossier(outDir, {
 });
 writeFileSync(join(outDir, 'dossier.json'), dossier);
 
-const gameFiles = readdirSync(join(outDir, 'game'), { recursive: true });
+const gameFiles = readdirSync(join(outDir, 'game'), { recursive: true }).length;
 const shotFiles = existsSync(join(outDir, 'screenshots'))
-  ? readdirSync(join(outDir, 'screenshots'))
-  : [];
-console.log(`Marina Heat built into ${outDir}`);
-console.log(`game files: ${gameFiles.length}, screenshots: ${shotFiles.join(', ') || 'none'}`);
-console.log(`dossier.json: ${dossier.length} bytes`);
+  ? readdirSync(join(outDir, 'screenshots')).length
+  : 0;
+console.log(
+  `Marina Heat: wrote dossier.json to ${outDir} ` +
+  `(game entries: ${gameFiles}, screenshots: ${shotFiles}).`,
+);

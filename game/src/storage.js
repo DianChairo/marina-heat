@@ -1,40 +1,40 @@
-// storage.js — localStorage persistence for Marina Heat.
-// Saves money, score, missions completed and best rampage score so the
-// Continue button on the title screen can pick up where you left off.
-const KEY = 'marina-heat-save-v1';
+// storage.js — localStorage save wrapper. All access is guarded so the
+// game still runs where storage is unavailable (private mode, file://).
+
+const KEY = 'marina-heat-save-v6';
+
+const DEFAULTS = {
+  cash: 250,
+  missionsDone: [],
+  totalChaos: 0,
+  timesWasted: 0,
+  timesBusted: 0,
+};
 
 export function loadSave() {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return null;
-    const s = JSON.parse(raw);
-    if (typeof s !== 'object' || !s) return null;
-    return {
-      money: typeof s.money === 'number' ? s.money : 0,
-      score: typeof s.score === 'number' ? s.score : 0,
-      missionsDone: Array.isArray(s.missionsDone) ? s.missionsDone : [],
-      bestRampage: typeof s.bestRampage === 'number' ? s.bestRampage : 0,
-      seed: typeof s.seed === 'number' ? s.seed : 1337,
-    };
+    const raw = window.localStorage.getItem(KEY);
+    if (!raw) return { ...DEFAULTS, fresh: true };
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULTS, ...parsed, fresh: false };
   } catch {
-    return null;
+    return { ...DEFAULTS, fresh: true };
   }
 }
 
-export function saveGame(G) {
+export function storeSave(save) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({
-      money: Math.round(G.player.money),
-      score: Math.round(G.score),
-      missionsDone: G.missionsDone,
-      bestRampage: G.bestRampage,
-      seed: G.seed,
-    }));
+    const { fresh, ...rest } = save;
+    window.localStorage.setItem(KEY, JSON.stringify(rest));
   } catch {
-    // storage full or unavailable — the game keeps running unsaved
+    // Storage full or blocked: the game continues without persisting.
   }
 }
 
 export function clearSave() {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  try {
+    window.localStorage.removeItem(KEY);
+  } catch {
+    // Nothing to clear.
+  }
 }
