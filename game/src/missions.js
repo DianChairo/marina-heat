@@ -1,191 +1,125 @@
 // missions.js — three jobs for fixer Marisol Vega, plus her phone thread.
-// 0 Bay Run: checkpoint race against the clock. 1 Special Delivery:
-// carry the package across town without wrecking the car. 2 Rampage:
-// score points before the timer ends. Each pays cash on completion.
-import { pushMessage } from './player.js';
-import { addHeat } from './police.js';
+// 1 Bay Run: checkpoint race against the clock. 2 Special Delivery: pick
+// up the package, drop it off, no cops is a bonus. 3 Rampage: cause chaos
+// for points before the timer ends. Completing one pays out and unlocks
+// the next; all three pay a $500 completion bonus on top.
+import { randomRoadPoint, WORLD } from './city.js';
 
 export const MISSION_DEFS = [
   {
-    id: 0, name: 'Bay Run', pay: 400,
-    brief: 'Race the checkpoints along the bay. Beat the clock, keep the paint on.',
-    time: 75,
+    id: 0, name: 'Bay Run', reward: 500, time: 90,
+    brief: 'Marisol: "Four checkpoints, bay to marina. Beat the clock, no questions."',
+    intro: 'Bay Run — hit all 4 checkpoints before the timer runs out.',
   },
   {
-    id: 1, name: 'Special Delivery', pay: 550,
-    brief: 'A package for the docks. Get it there in one piece — the car, and you.',
-    time: 90,
+    id: 1, name: 'Special Delivery', reward: 800, time: 120,
+    brief: 'Marisol: "Pick up the package at the pier. Deliver it uptown. Keep it quiet."',
+    intro: 'Special Delivery — grab the package, then reach the drop-off.',
   },
   {
-    id: 2, name: 'Rampage', pay: 700,
-    brief: 'The Marinas want a message sent. Score 500 points before the timer ends.',
-    time: 60,
+    id: 2, name: 'Rampage', reward: 1000, time: 60,
+    brief: 'Marisol: "The Vipers crossed me. Make a mess downtown. Score 300 to get paid."',
+    intro: 'Rampage — cause chaos, score 300 before the timer ends.',
   },
 ];
 
-export function createMissionState() {
-  return {
-    active: false, id: -1, stage: 0,
-    checkpoints: [], timer: 0, score: 0, target: 0,
-    done: [], failed: false,
-  };
-}
-
-function checkpointRing(G, rng, nearPlayer) {
-  // Pick checkpoint spots on roads, spread across the city.
-  const spots = [];
-  for (let i = 0; i < 4; i++) {
-    const rx = G.city.roadsV[(i * 2 + 1) % G.city.roadsV.length];
-    const ry = G.city.roadsH[(i * 3 + 2) % G.city.roadsH.length];
-    spots.push({ x: rx, y: ry, r: 46, hit: false });
-  }
-  return spots;
-}
-
 export function startMission(G, id) {
   const def = MISSION_DEFS[id];
-  if (!def || G.mission.active) return false;
-  G.mission.active = true;
-  G.mission.id = id;
-  G.mission.stage = 0;
-  G.mission.timer = def.time;
-  G.mission.score = 0;
-  G.mission.target = id === 2 ? 500 : 0;
-  G.mission.failed = false;
+  const m = { id, def, t: def.time, stage: 0, score0: G.score, done: false, failed: false, target: null, target2: null };
   if (id === 0) {
-    G.mission.checkpoints = checkpointRing(G, G.rng, true);
-    pushMessage(G, 'Marisol', 'Bay Run: hit all four rings before the clock dies. Go.');
+    m.targets = [];
+    for (let i = 0; i < 4; i++) {
+      const p = randomRoadPoint(G.city, G.rng);
+      m.targets.push({ x: p.x, y: p.y, hit: false });
+    }
+    m.target = m.targets[0];
   } else if (id === 1) {
-    G.mission.checkpoints = [{ x: 300, y: 1600, r: 60, hit: false }];
-    pushMessage(G, 'Marisol', 'Package is in your pocket. Docks, west end. Do not scratch it.');
-  } else {
-    G.mission.checkpoints = [];
-    pushMessage(G, 'Marisol', 'Rampage: 500 points, one minute. Make it loud.');
+    m.target = { x: 420, y: WORLD - 380 }; // the pier pickup
+    m.target2 = { x: 320 + 7 * 320, y: 320 + 1 * 320 }; // uptown drop-off
   }
+  G.mission = m;
+  G.messages.push({ from: 'Marisol Vega', text: def.brief, t: 7 });
   G.audio.phone();
-  return true;
+  return m;
 }
 
-function completeMission(G, reason) {
-  const def = MISSION_DEFS[G.mission.id];
-  const p = G.player;
-  p.money += def.pay;
-  p.score += def.pay;
-  G.mission.done.push(G.mission.id);
-  pushMessage(G, 'Marisol', `${def.name} done. $${def.pay} is yours. ${reason || ''}`);
-  G.audio.cash();
-  G.mission.active = false;
-  G.mission.id = -1;
-  G.mission.checkpoints = [];
-}
-
-function failMission(G, reason) {
-  pushMessage(G, 'Marisol', `Job blown. ${reason}`);
-  G.mission.active = false;
-  G.mission.id = -1;
-  G.mission.checkpoints = [];
-  G.mission.failed = true;
-}
-
-export function updateMissions(G, dt) {
+export function updateMission(G, dt) {
   const m = G.mission;
-  if (!m.active) return;
-  m.timer -= dt;
-  if (m.timer <= 0) {
-    if (m.id === 2 && m.score >= m.target) completeMission(G, 'Rampage complete.');
-    else failMission(G, 'Out of time.');
+  if (!m || m.done || m.failed) return;
+  m.t -= dt;
+  if (m.t <= 0) {
+    m.t = 0;
+    m.failed = true;
+    G.messages.push({ from: 'Marisol Vega', text: '"Too slow. The job is dead."', t: 6 });
+    G.mission = null;
     return;
   }
   const p = G.player;
   if (m.id === 0) {
-    const cp = m.checkpoints[m.stage];
-    if (cp && Math.hypot(p.x - cp.x, p.y - cp.y) < cp.r) {
-      cp.hit = true;
-      m.stage++;
-      m.timer += 12;
-      G.audio.cash();
-      pushMessage(G, 'Marisol', `Checkpoint ${m.stage} of ${m.checkpoints.length}. +12s.`);
-      if (m.stage >= m.checkpoints.length) completeMission(G, 'Clean run.');
+    const cur = m.targets.find((t) => !t.hit);
+    if (!cur) { completeMission(G, m); return; }
+    m.target = cur;
+    if (Math.hypot(p.x - cur.x, p.y - cur.y) < 60) {
+      cur.hit = true;
+      G.score += 50;
+      G.audio.pickup();
+      G.messages.push({ from: 'Marisol Vega', text: `"Checkpoint ${m.targets.filter((t) => t.hit).length}/4. Keep moving."`, t: 4 });
     }
   } else if (m.id === 1) {
-    const cp = m.checkpoints[0];
-    if (cp && Math.hypot(p.x - cp.x, p.y - cp.y) < cp.r) {
-      if (!p.onFoot && p.car && p.car.hp > 40) {
-        completeMission(G, 'Package intact.');
-      } else if (p.onFoot) {
-        pushMessage(G, 'Marisol', 'Bring the car, not your feet. The package rides in the trunk.');
-        cp.hit = false;
-      } else {
-        failMission(G, 'The car was too banged up. They noticed.');
+    if (m.stage === 0) {
+      if (Math.hypot(p.x - m.target.x, p.y - m.target.y) < 60) {
+        m.stage = 1;
+        G.audio.pickup();
+        G.messages.push({ from: 'Marisol Vega', text: '"Package secured. Now uptown — and don\'t get spotted."', t: 5 });
       }
-    }
-    if (!p.onFoot && p.car && p.car.hp <= 25) {
-      failMission(G, 'The car is falling apart. Job is off.');
+    } else if (Math.hypot(p.x - m.target2.x, p.y - m.target2.y) < 60) {
+      completeMission(G, m);
     }
   } else if (m.id === 2) {
-    if (m.score >= m.target) {
-      completeMission(G, 'The Marinas heard you.');
-    }
+    if (G.score - m.score0 >= 300) completeMission(G, m);
   }
 }
 
-export function nextMissionId(G) {
-  for (let i = 0; i < MISSION_DEFS.length; i++) {
-    if (!G.mission.done.includes(i)) return i;
-  }
-  return 0;
-}
-
-// Marisol's opening thread, sent when a new game starts.
-export function openingMessages(G) {
-  pushMessage(G, 'Marisol', 'You are new in Coral Marina. I am Marisol Vega. I find work for people who can drive.');
-  pushMessage(G, 'Marisol', 'Walk to the pink M on your map, or press 1, 2, 3 to take a job. First one pays $400.');
-  pushMessage(G, 'System', 'WASD move, mouse aim, click to shoot, E to steal a car, Shift to sprint, P pause.');
+function completeMission(G, m) {
+  m.done = true;
+  const bonus = G.missionsDone.length === 2 ? 500 : 0; // all-three bonus
+  const pay = m.def.reward + bonus;
+  G.player.money += pay;
+  G.score += m.def.reward;
+  if (!G.missionsDone.includes(m.id)) G.missionsDone.push(m.id);
+  G.messages.push({ from: 'Marisol Vega', text: `"${m.def.name} done. $${pay} is yours."`, t: 6 });
+  G.audio.pickup();
+  G.mission = null;
 }
 
 export function drawMissionMarkers(ctx, G) {
   const m = G.mission;
-  if (!m.active) return;
-  for (let i = 0; i < m.checkpoints.length; i++) {
-    const cp = m.checkpoints[i];
-    if (cp.hit) continue;
-    const isNext = m.id !== 0 || i === m.stage;
-    const pulse = 40 + Math.sin(G.time * 5) * 8;
-    ctx.strokeStyle = isNext ? '#ffd94a' : 'rgba(255,217,74,0.4)';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(cp.x, cp.y, pulse, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,217,74,0.12)';
-    ctx.beginPath();
-    ctx.arc(cp.x, cp.y, pulse, 0, Math.PI * 2);
-    ctx.fill();
-    if (isNext) {
-      ctx.fillStyle = '#ffd94a';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(m.id === 1 ? 'DELIVER' : `CHECKPOINT ${i + 1}`, cp.x, cp.y - pulse - 8);
-    }
+  if (!m) return;
+  const marks = [];
+  if (m.id === 0 && m.target) marks.push({ x: m.target.x, y: m.target.y, color: '#f59e0b', label: 'CHECKPOINT' });
+  if (m.id === 1) {
+    if (m.stage === 0) marks.push({ x: m.target.x, y: m.target.y, color: '#22c55e', label: 'PICKUP' });
+    else marks.push({ x: m.target2.x, y: m.target2.y, color: '#22c55e', label: 'DROP-OFF' });
   }
-  // Direction arrow at screen edge toward the next checkpoint.
-  const target = m.id === 0 ? m.checkpoints[m.stage] : m.checkpoints[0];
-  if (target) {
-    const p = G.player;
-    const d = Math.hypot(target.x - p.x, target.y - p.y);
-    if (d > 500) {
-      const ang = Math.atan2(target.y - p.y, target.x - p.x);
-      const ax = p.x + Math.cos(ang) * 120;
-      const ay = p.y + Math.sin(ang) * 120;
+  for (const mk of marks) {
+    const pulse = 1 + Math.sin(G.time * 5) * 0.15;
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.strokeStyle = mk.color; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(mk.x, mk.y, 34 * pulse, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = mk.color;
+    ctx.beginPath(); ctx.arc(mk.x, mk.y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(mk.label, mk.x, mk.y - 44);
+    ctx.restore();
+  }
+  if (m.id === 0) {
+    for (const t of m.targets) {
+      if (t.hit) continue;
       ctx.save();
-      ctx.translate(ax, ay);
-      ctx.rotate(ang);
-      ctx.fillStyle = '#ffd94a';
-      ctx.beginPath();
-      ctx.moveTo(14, 0);
-      ctx.lineTo(-8, -9);
-      ctx.lineTo(-8, 9);
-      ctx.closePath();
-      ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath(); ctx.arc(t.x, t.y, 8, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
   }

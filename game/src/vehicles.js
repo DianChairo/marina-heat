@@ -1,181 +1,118 @@
-// vehicles.js — car physics: arcade acceleration, steering and drift,
-// plus damage states (smoke, fire, wreck) and car-car collisions.
-import { clampToCity, resolveBuildings } from './city.js';
-import { isDown, wasPressed } from './input.js';
+// vehicles.js — stealable cars with drift driving, damage and wrecks.
+// E near a car (or its driver seat) steals it; the driver is pulled out.
+// Damage makes a car smoke, then burn, then wreck — a wrecked car stalls.
+import { collideBuildings, WORLD } from './city.js';
 
-const CAR_COLORS = ['#d84a4a', '#4a7ad8', '#e8c33a', '#4ad88a', '#c9c9c9', '#8a4ad8', '#e87a2a', '#3aa8a8'];
+const CAR_COLORS = ['#dc2626', '#2563eb', '#f59e0b', '#16a34a', '#7c3aed', '#ec4899', '#f8fafc', '#111827', '#0891b2'];
 
-export function randomCarColor(rng) {
-  return rng.pick(CAR_COLORS);
-}
-
-export function createCar(x, y, angle, color, kind) {
+export function createCar(x, y, angle, color, police = false) {
   return {
-    kind: kind || 'traffic',
-    x, y, angle,
-    speed: 0,
-    steer: 0,
-    color,
-    hp: 100,
-    maxHp: 100,
-    driver: kind === 'traffic' ? 'ai' : null,
-    wrecked: false,
-    smoke: 0,
-    fire: 0,
-    // Traffic AI lane state.
-    lane: null,
-    laneDir: 0,
-    honk: 0,
+    x, y, angle, speed: 0, color: color || CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)],
+    hp: 100, police, wrecked: false, driver: police ? 'cop' : null,
+    w: 46, h: 22, steer: 0, smoke: 0,
   };
 }
 
-// Arcade car physics. `control` is {throttle, brake, steer} in -1..1.
-export function stepCar(G, car, dt, control) {
-  if (car.wrecked) {
-    car.speed *= Math.max(0, 1 - 3 * dt);
-    return;
+export function nearestCar(G, x, y, maxDist) {
+  let best = null; let bd = maxDist;
+  for (const c of G.cars) {
+    if (c.wrecked) continue;
+    const d = Math.hypot(c.x - x, c.y - y);
+    if (d < bd) { bd = d; best = c; }
   }
-  const maxSpeed = car.kind === 'police' ? 430 : 380;
-  const accel = 300;
-  const reverseMax = 140;
-  car.speed += control.throttle * accel * dt;
-  if (control.brake > 0) car.speed -= control.brake * 520 * dt;
-  // Drag + rolling resistance.
-  car.speed -= car.speed * 0.55 * dt;
-  if (car.speed > maxSpeed) car.speed = maxSpeed;
-  if (car.speed < -reverseMax) car.speed = -reverseMax;
-  if (Math.abs(car.speed) < 4 && control.throttle === 0) car.speed = 0;
-  // Steering weakens at very low speed, strengthens with drift.
-  const grip = Math.min(1, Math.abs(car.speed) / 90);
-  const drift = isDown(G.input, 'Space') ? 1.6 : 1;
-  car.angle += control.steer * 2.4 * grip * drift * dt * Math.sign(car.speed || 1);
-  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
-  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
-  const fixed = resolveBuildings(G.city, nx, ny, 16);
-  if ((fixed.x !== nx || fixed.y !== ny) && Math.abs(car.speed) > 60) {
-    damageCar(G, car, Math.abs(car.speed) * 0.08);
-    car.speed *= 0.35;
-    G.audio.crash();
-    spawnSparks(G, fixed.x, fixed.y);
-  }
-  car.x = fixed.x;
-  car.y = fixed.y;
-  const clamped = clampToCity(G.city, car.x, car.y, 22);
-  if (clamped.x !== car.x || clamped.y !== car.y) {
-    car.speed *= 0.5;
-    car.x = clamped.x;
-    car.y = clamped.y;
-  }
-  if (car.hp < 55) car.smoke = Math.min(1, car.smoke + dt * 0.4);
-  if (car.hp < 28) car.fire = Math.min(1, car.fire + dt * 0.5);
+  return best;
+}
+
+export function enterCar(G, car) {
+  const p = G.player;
+  p.onFoot = false;
+  p.car = car;
+  car.driver = 'player';
+  p.x = car.x; p.y = car.y;
+}
+
+export function exitCar(G) {
+  const p = G.player;
+  if (!p.car) return;
+  const car = p.car;
+  car.driver = null;
+  car.speed *= 0.3;
+  p.onFoot = true;
+  p.car = null;
+  p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
+  p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
 }
 
 export function damageCar(G, car, amount) {
   if (car.wrecked) return;
   car.hp -= amount;
+  if (car.hp <= 50) car.smoke = 1;
+  if (car.hp <= 25) car.smoke = 2;
   if (car.hp <= 0) {
     car.hp = 0;
     car.wrecked = true;
     car.speed = 0;
-    car.smoke = 1;
-    car.fire = 1;
-    spawnSparks(G, car.x, car.y);
     G.audio.crash();
-    if (car.kind === 'player' && G.player.car === car) {
-      // Player's ride blew up: dump them out on foot, hurt.
-      G.player.onFoot = true;
-      G.player.car = null;
-      G.player.x = car.x + 30;
-      G.player.y = car.y + 30;
-      G.player.hp = Math.max(1, G.player.hp - 20);
+    G.particles.push({ x: car.x, y: car.y, r: 30, life: 0.8, max: 0.8, color: '#f97316' });
+    if (car.driver === 'player') {
+      exitCar(G);
+      damagePlayer(G, 15);
     }
   }
 }
 
-// Player driving input: W/S throttle and brake, A/D steer, E to bail out.
-export function playerCarControl(G) {
-  const input = G.input;
-  const throttle = isDown(input, 'KeyW', 'ArrowUp') ? 1 : isDown(input, 'KeyS', 'ArrowDown') ? -0.6 : 0;
-  const brake = isDown(input, 'KeyS', 'ArrowDown') && (G.player.car?.speed ?? 0) > 30 ? 1 : 0;
-  const steer = (isDown(input, 'KeyA', 'ArrowLeft') ? -1 : 0) + (isDown(input, 'KeyD', 'ArrowRight') ? 1 : 0);
-  return { throttle, brake, steer };
-}
-
-export function updatePlayerCar(G, dt) {
+function damagePlayer(G, amount) {
+  // local copy to avoid a circular import with player.js
   const p = G.player;
-  if (p.onFoot || !p.car) return;
-  const car = p.car;
-  if (wasPressed(G.input, 'KeyE')) {
-    p.onFoot = true;
-    p.x = car.x + Math.cos(car.angle + Math.PI / 2) * 34;
-    p.y = car.y + Math.sin(car.angle + Math.PI / 2) * 34;
-    p.car = null;
-    car.kind = 'traffic';
-    car.driver = 'ai';
-    car.speed *= 0.4;
-    return;
+  if (G.mode !== 'play') return;
+  p.hp -= amount;
+  p.hurtFlash = 0.35;
+  if (p.hp <= 0) { p.hp = 0; G.mode = 'wasted'; G.audio.setEngine(false, 0); G.audio.setSiren(false); }
+}
+
+export function updateCar(G, car, dt) {
+  if (car.wrecked) return;
+  const inp = G.input;
+  const isPlayer = car.driver === 'player';
+  let throttle = 0; let steer = 0;
+  if (isPlayer) {
+    if (inp.down('w', 'arrowup')) throttle = 1;
+    if (inp.down('s', 'arrowdown')) throttle = -0.6;
+    if (inp.down('a', 'arrowleft')) steer = -1;
+    if (inp.down('d', 'arrowright')) steer = 1;
+    if (inp.down(' ')) throttle *= 0.2; // handbrake
   }
-  stepCar(G, car, dt, playerCarControl(G));
-  p.x = car.x;
-  p.y = car.y;
-  p.angle = car.angle;
-  G.audio.engine(Math.min(1, Math.abs(car.speed) / 380));
-}
-
-export function spawnSparks(G, x, y) {
-  for (let i = 0; i < 10; i++) {
-    G.particles.push({
-      x, y,
-      vx: (Math.random() - 0.5) * 260,
-      vy: (Math.random() - 0.5) * 260,
-      t: 0, life: 0.5, color: '#ffcc33', size: 3,
-    });
-  }
-}
-
-export function spawnSmoke(G, x, y, dark) {
-  G.particles.push({
-    x: x + (Math.random() - 0.5) * 10,
-    y: y + (Math.random() - 0.5) * 10,
-    vx: (Math.random() - 0.5) * 20,
-    vy: -30 - Math.random() * 30,
-    t: 0, life: 0.9, color: dark ? '#333' : '#999', size: 6,
-  });
-}
-
-export function updateParticles(G, dt) {
-  for (const pt of G.particles) {
-    pt.t += dt;
-    pt.x += pt.vx * dt;
-    pt.y += pt.vy * dt;
-  }
-  G.particles = G.particles.filter((pt) => pt.t < pt.life);
-}
-
-// Simple circle-vs-circle separation between cars so traffic does not stack.
-export function separateCars(G) {
-  const cars = G.cars;
-  for (let i = 0; i < cars.length; i++) {
-    for (let j = i + 1; j < cars.length; j++) {
-      const a = cars[i];
-      const b = cars[j];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.hypot(dx, dy);
-      if (d > 0.01 && d < 34) {
-        const push = (34 - d) / 2;
-        const nx = dx / d;
-        const ny = dy / d;
-        a.x -= nx * push;
-        a.y -= ny * push;
-        b.x += nx * push;
-        b.y += ny * push;
-        if (Math.abs(a.speed) > 120 || Math.abs(b.speed) > 120) {
-          damageCar(G, a, 4);
-          damageCar(G, b, 4);
-        }
-      }
+  const maxSpeed = car.police ? 430 : 400;
+  car.speed += throttle * 320 * dt;
+  car.speed -= car.speed * 0.9 * dt; // drag
+  if (car.speed > maxSpeed) car.speed = maxSpeed;
+  if (car.speed < -140) car.speed = -140;
+  const grip = Math.abs(car.speed) > 240 && steer !== 0 ? 0.55 : 1; // drift at speed
+  car.angle += steer * (car.speed / 160) * grip * dt * (car.speed < 0 ? -1 : 1);
+  const nx = car.x + Math.cos(car.angle) * car.speed * dt;
+  const ny = car.y + Math.sin(car.angle) * car.speed * dt;
+  const hit = collideBuildings(G.city, nx, ny, 22);
+  if (hit) {
+    if (Math.abs(car.speed) > 120) {
+      damageCar(G, car, Math.abs(car.speed) * 0.06);
+      G.audio.crash();
+      G.particles.push({ x: nx, y: ny, r: 16, life: 0.5, max: 0.5, color: '#fbbf24' });
     }
+    car.speed *= -0.25;
+  } else {
+    car.x = Math.max(20, Math.min(WORLD - 20, nx));
+    car.y = Math.max(20, Math.min(WORLD - 20, ny));
+  }
+  if (isPlayer) {
+    G.player.x = car.x; G.player.y = car.y; G.player.angle = car.angle;
+    G.audio.setEngine(true, Math.abs(car.speed) / maxSpeed);
+  }
+  if (car.smoke > 0 && Math.random() < 0.3) {
+    G.particles.push({
+      x: car.x + (Math.random() - 0.5) * 20, y: car.y + (Math.random() - 0.5) * 20,
+      r: 6 + Math.random() * 8, life: 0.9, max: 0.9,
+      color: car.smoke === 2 ? '#f97316' : '#9ca3af',
+    });
   }
 }
 
@@ -183,49 +120,32 @@ export function drawCar(ctx, car) {
   ctx.save();
   ctx.translate(car.x, car.y);
   ctx.rotate(car.angle);
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillStyle = '#00000055';
+  ctx.fillRect(-24, -12, 48, 26);
+  ctx.fillStyle = car.wrecked ? '#3f3f46' : car.color;
   ctx.beginPath();
-  ctx.ellipse(2, 4, 20, 11, 0, 0, Math.PI * 2);
+  ctx.roundRect(-23, -11, 46, 22, 6);
   ctx.fill();
-  const body = car.wrecked ? '#2a2a2a' : car.color;
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.roundRect(-20, -11, 40, 22, 6);
-  ctx.fill();
-  // Cabin + windshield.
-  ctx.fillStyle = car.wrecked ? '#1a1a1a' : 'rgba(180,220,240,0.9)';
-  ctx.beginPath();
-  ctx.roundRect(-6, -9, 14, 18, 4);
-  ctx.fill();
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-19, -12, 5, 5);
-  ctx.fillRect(-19, 7, 5, 5);
-  ctx.fillRect(14, -12, 5, 5);
-  ctx.fillRect(14, 7, 5, 5);
-  // Headlights.
-  ctx.fillStyle = '#ffe9a8';
-  ctx.fillRect(19, -8, 2, 4);
-  ctx.fillRect(19, 4, 2, 4);
-  if (car.kind === 'police') {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(-14, -11, 26, 4);
-    ctx.fillStyle = '#222';
-    ctx.font = 'bold 7px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('POLICE', 0, -12);
-  }
-  if (car.kind === 'player') {
-    ctx.strokeStyle = '#ffd94a';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(-22, -13, 44, 26, 7);
-    ctx.stroke();
+  ctx.fillStyle = car.wrecked ? '#27272a' : '#0ea5e9';
+  ctx.fillRect(-6, -9, 14, 18); // windshield + roof glass
+  ctx.fillStyle = '#f8fafc';
+  ctx.fillRect(18, -9, 3, 4); ctx.fillRect(18, 5, 3, 4); // headlights
+  ctx.fillStyle = '#ef4444';
+  ctx.fillRect(-23, -9, 3, 4); ctx.fillRect(-23, 5, 3, 4); // tail lights
+  if (car.police) {
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(-4, -11, 12, 22);
+    ctx.fillStyle = '#1d4ed8';
+    ctx.fillRect(-2, -11, 8, 22);
   }
   ctx.restore();
-  if (car.fire > 0.3) {
-    ctx.fillStyle = `rgba(255,${Math.floor(120 + Math.random() * 80)},0,0.85)`;
-    ctx.beginPath();
-    ctx.arc(car.x, car.y, 8 + Math.random() * 6, 0, Math.PI * 2);
-    ctx.fill();
+  if (car.wrecked) {
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.fillStyle = '#18181b';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('WRECK', car.x, car.y - 20);
+    ctx.restore();
   }
 }

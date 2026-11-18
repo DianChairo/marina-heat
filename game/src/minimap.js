@@ -1,63 +1,55 @@
-// minimap.js — the corner map: city blocks, roads, the beach, and dots
-// for the player (green), police (red), traffic (white) and the current
-// objective (yellow). Drawn on its own small canvas.
-export function drawMinimap(ctx, G, size) {
-  const city = G.city;
-  const scale = size / city.size;
-  ctx.clearRect(0, 0, size, size);
-  ctx.fillStyle = 'rgba(10,20,16,0.78)';
-  ctx.fillRect(0, 0, size, size);
-  // Ocean + sand.
-  ctx.fillStyle = '#2f6fb2';
-  ctx.fillRect(0, 0, 170 * scale, size);
-  ctx.fillStyle = '#d9c184';
-  ctx.fillRect(170 * scale, 0, 65 * scale, size);
-  // Roads.
-  ctx.fillStyle = '#888';
-  for (const rx of city.roadsV) ctx.fillRect(rx * scale - 1, 0, 2, size);
-  for (const ry of city.roadsH) ctx.fillRect(0, ry * scale - 1, size, 2);
-  // Buildings.
-  ctx.fillStyle = '#bbb';
-  for (const b of city.buildings) ctx.fillRect(b.x * scale, b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
-  // Fixer.
-  ctx.fillStyle = '#e84a8a';
-  ctx.beginPath();
-  ctx.arc(city.fixer.x * scale, city.fixer.y * scale, 3.5, 0, Math.PI * 2);
-  ctx.fill();
-  // Objective.
-  const m = G.mission;
-  if (m.active) {
-    const target = m.id === 0 ? m.checkpoints[m.stage] : m.checkpoints[0];
-    if (target) {
-      ctx.fillStyle = '#ffd94a';
-      ctx.beginPath();
-      ctx.arc(target.x * scale, target.y * scale, 4, 0, Math.PI * 2);
-      ctx.fill();
+// minimap.js — the corner minimap: the whole city scaled down, with the
+// player (green), police (blue), mission objective (gold) and the camera
+// viewport rectangle. Drawn top-left over the HUD.
+import { WORLD } from './city.js';
+
+export function drawMinimap(ctx, G) {
+  const S = 180; // minimap is 180x180
+  const scale = S / WORLD;
+  const x0 = 16; const y0 = 16;
+  ctx.save();
+  ctx.fillStyle = '#0f172acc';
+  ctx.fillRect(x0 - 4, y0 - 4, S + 8, S + 8);
+  // water + sand
+  ctx.fillStyle = '#0e7490';
+  ctx.fillRect(x0, y0, 240 * scale + 2, S);
+  ctx.fillStyle = '#fde68a';
+  ctx.fillRect(x0 + 240 * scale, y0, 8, S);
+  // ground
+  ctx.fillStyle = '#334155';
+  ctx.fillRect(x0 + 240 * scale + 8, y0, S - 240 * scale - 8, S);
+  // roads
+  ctx.fillStyle = '#64748b';
+  for (const rx of G.city.roadsV) ctx.fillRect(x0 + rx * scale - 1, y0, 2, S);
+  for (const ry of G.city.roadsH) ctx.fillRect(x0, y0 + ry * scale - 1, S, 2);
+  // buildings
+  ctx.fillStyle = '#94a3b8';
+  for (const b of G.city.buildings) {
+    ctx.fillRect(x0 + b.x * scale, y0 + b.y * scale, Math.max(1, b.w * scale), Math.max(1, b.h * scale));
+  }
+  // mission objective
+  if (G.mission) {
+    const t = G.mission.id === 0 ? G.mission.target
+      : G.mission.id === 1 ? (G.mission.stage === 0 ? G.mission.target : G.mission.target2) : null;
+    if (t) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.beginPath(); ctx.arc(x0 + t.x * scale, y0 + t.y * scale, 5, 0, Math.PI * 2); ctx.fill();
     }
   }
-  // Traffic dots.
-  ctx.fillStyle = '#fff';
-  for (const car of G.cars) {
-    if (car.kind === 'traffic') ctx.fillRect(car.x * scale - 1, car.y * scale - 1, 2, 2);
+  // police
+  ctx.fillStyle = '#3b82f6';
+  for (const c of G.cars) {
+    if (!c.police || c.wrecked) continue;
+    ctx.beginPath(); ctx.arc(x0 + c.x * scale, y0 + c.y * scale, 3, 0, Math.PI * 2); ctx.fill();
   }
-  // Police dots.
-  ctx.fillStyle = '#ff2a2a';
-  for (const car of G.cars) {
-    if (car.kind === 'police') ctx.fillRect(car.x * scale - 1.5, car.y * scale - 1.5, 3, 3);
-  }
-  // Player: green dot with a white ring, centred.
-  const p = G.player;
-  ctx.fillStyle = '#37d67a';
-  ctx.beginPath();
-  ctx.arc(p.x * scale, p.y * scale, 4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.arc(p.x * scale, p.y * scale, 5.5, 0, Math.PI * 2);
-  ctx.stroke();
-  // Viewport rectangle.
-  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
-  ctx.lineWidth = 1;
-  ctx.strokeRect(G.camera.x * scale, G.camera.y * scale, G.camera.w * scale, G.camera.h * scale);
+  // player
+  ctx.fillStyle = '#22c55e';
+  ctx.beginPath(); ctx.arc(x0 + G.player.x * scale, y0 + G.player.y * scale, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(x0 + G.player.x * scale, y0 + G.player.y * scale, 7, 0, Math.PI * 2); ctx.stroke();
+  // viewport rectangle
+  ctx.strokeStyle = '#ffffff88'; ctx.lineWidth = 1;
+  ctx.strokeRect(x0 + G.camera.x * scale, y0 + G.camera.y * scale,
+    G.view.w * scale, G.view.h * scale);
+  ctx.restore();
 }

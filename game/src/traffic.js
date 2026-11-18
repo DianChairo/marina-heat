@@ -1,77 +1,77 @@
-// traffic.js — lane-following civilian cars that cruise the road grid,
-// slow near the player, and respawn far away so the streets stay alive.
+// traffic.js — lane-following civilian traffic.
+// Cars pick a road, a lane and a direction, cruise along it, slow for the
+// car ahead, and turn at intersections. They flee when shot at.
 import { randomRoadPoint } from './city.js';
-import { createCar, drawCar, randomCarColor, spawnSmoke, stepCar } from './vehicles.js';
+import { createCar, drawCar } from './vehicles.js';
 
-const MAX_TRAFFIC = 14;
-
-export function spawnTrafficCar(G) {
-  const p = randomRoadPoint(G.rng, G.city);
-  const car = createCar(p.x, p.y, p.angle, randomCarColor(G.rng), 'traffic');
-  car.lane = p.angle;
-  car.speed = G.rng.range(90, 150);
-  G.cars.push(car);
-  return car;
+export function spawnTraffic(G, n) {
+  for (let i = 0; i < n; i++) {
+    const p = randomRoadPoint(G.city, G.rng);
+    const angle = p.vertical ? (G.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2)
+      : (G.rng.chance(0.5) ? 0 : Math.PI);
+    const car = createCar(p.x, p.y, angle);
+    car.driver = 'traffic';
+    car.cruise = G.rng.range(90, 150);
+    car.road = p;
+    G.cars.push(car);
+  }
 }
 
-export function initTraffic(G, count) {
-  for (let i = 0; i < count; i++) spawnTrafficCar(G);
+function carAhead(G, car) {
+  const fx = Math.cos(car.angle); const fy = Math.sin(car.angle);
+  let best = Infinity;
+  for (const o of G.cars) {
+    if (o === car || o.wrecked) continue;
+    const dx = o.x - car.x; const dy = o.y - car.y;
+    const along = dx * fx + dy * fy;
+    const side = Math.abs(-dx * fy + dy * fx);
+    if (along > 0 && along < 90 && side < 26) best = Math.min(best, along);
+  }
+  return best;
 }
 
 export function updateTraffic(G, dt) {
-  const p = G.player;
-  let traffic = 0;
-  for (const car of G.cars) if (car.kind === 'traffic') traffic++;
-  if (traffic < MAX_TRAFFIC && G.rng.chance(0.02)) spawnTrafficCar(G);
   for (const car of G.cars) {
-    if (car.kind !== 'traffic' || car.wrecked) continue;
-    const distP = Math.hypot(car.x - p.x, car.y - p.y);
-    if (distP > 1400) {
-      // Recycle far-away cars onto a road near the player.
-      const np = randomRoadPoint(G.rng, G.city);
-      car.x = np.x;
-      car.y = np.y;
-      car.angle = np.angle;
-      car.speed = G.rng.range(90, 150);
-      continue;
+    if (car.driver !== 'traffic' || car.wrecked) continue;
+    const ahead = carAhead(G, car);
+    const want = ahead < 70 ? 0 : car.cruise;
+    car.speed += (want - car.speed) * 1.6 * dt;
+    // Stay glued to the lane: steer toward the road centre line.
+    const road = car.road;
+    let targetAngle = car.angle;
+    if (road.vertical) {
+      const laneX = road.x + (Math.sin(car.angle) > 0 ? 11 : -11);
+      const err = laneX - car.x;
+      targetAngle = Math.sin(car.angle) > 0 ? Math.PI / 2 : -Math.PI / 2;
+      car.x += Math.max(-60 * dt, Math.min(60 * dt, err * 2 * dt));
+      car.y += Math.sin(car.angle) * car.speed * dt;
+    } else {
+      const laneY = road.y + (Math.cos(car.angle) > 0 ? 11 : -11);
+      const err = laneY - car.y;
+      targetAngle = Math.cos(car.angle) > 0 ? 0 : Math.PI;
+      car.y += Math.max(-60 * dt, Math.min(60 * dt, err * 2 * dt));
+      car.x += Math.cos(car.angle) * car.speed * dt;
     }
-    // At intersections (near a crossing road) sometimes turn.
-    const nearV = G.city.roadsV.some((rx) => Math.abs(car.x - rx) < 34);
-    const nearH = G.city.roadsH.some((ry) => Math.abs(car.y - ry) < 34);
-    if (nearV && nearH && G.rng.chance(0.006)) {
-      car.angle += G.rng.pick([-Math.PI / 2, Math.PI / 2]);
-    }
-    // Slow down if another car is right ahead.
-    let slow = false;
-    for (const other of G.cars) {
-      if (other === car || other.wrecked) continue;
-      const dx = other.x - car.x;
-      const dy = other.y - car.y;
-      const ahead = dx * Math.cos(car.angle) + dy * Math.sin(car.angle);
-      const side = Math.abs(-dx * Math.sin(car.angle) + dy * Math.cos(car.angle));
-      if (ahead > 0 && ahead < 70 && side < 20) {
-        slow = true;
-        break;
-      }
-    }
-    const target = slow ? 0 : G.rng.range(110, 150);
-    const control = {
-      throttle: car.speed < target ? 0.55 : 0,
-      brake: car.speed > target + 20 ? 0.8 : 0,
-      steer: 0,
-    };
-    // Gentle steering back onto the current heading.
-    let diff = car.lane - car.angle;
+    let diff = targetAngle - car.angle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    control.steer = Math.max(-1, Math.min(1, diff * 2));
-    stepCar(G, car, dt, control);
-    if (car.smoke > 0.2 && G.rng.chance(0.08)) spawnSmoke(G, car.x, car.y, false);
+    car.angle += diff * 2.2 * dt;
+    // Turn at an intersection: pick a new road when reaching one.
+    const onV = G.city.roadsV.some((rx) => Math.abs(car.x - rx) < 4);
+    const onH = G.city.roadsH.some((ry) => Math.abs(car.y - ry) < 4);
+    if ((onV && onH) || car.x < 330 || car.x > 3180 || car.y < 330 || car.y > 3180) {
+      if (G.rng.chance(0.5)) {
+        const np = randomRoadPoint(G.city, G.rng);
+        car.road = np;
+        car.x = np.x; car.y = np.y;
+        car.angle = np.vertical ? (G.rng.chance(0.5) ? Math.PI / 2 : -Math.PI / 2)
+          : (G.rng.chance(0.5) ? 0 : Math.PI);
+      }
+    }
+    if (G.player.onFoot === false && G.player.car === car) car.driver = 'player';
   }
 }
 
 export function drawTraffic(ctx, G) {
-  for (const car of G.cars) {
-    if (car.kind === 'traffic') drawCar(ctx, car);
-  }
+  for (const car of G.cars) drawCar(ctx, car);
 }

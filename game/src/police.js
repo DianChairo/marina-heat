@@ -1,163 +1,118 @@
-// police.js — the 1-5 star wanted system: heat builds with crimes,
-// decays when the player lays low, and police cars chase and ram.
-// When a cop car stays close while the player is slow, the BUSTED meter fills.
-import { randomRoadPoint } from './city.js';
-import { createCar, damageCar, drawCar, stepCar } from './vehicles.js';
-import { damagePlayer, pushMessage } from './player.js';
+// police.js — the 1-5 star wanted system and the cops who enforce it.
+// Heat rises with crime and decays when you lay low; at 1+ stars police
+// cars spawn and chase/ram you. Get caught slow and the BUSTED meter fills.
+import { createCar, drawCar } from './vehicles.js';
+import { randomRoadPoint, collideBuildings } from './city.js';
 
-export function starsFromHeat(heat) {
-  if (heat <= 0) return 0;
-  if (heat < 20) return 1;
-  if (heat < 40) return 2;
-  if (heat < 60) return 3;
-  if (heat < 85) return 4;
-  return 5;
+export function addWanted(G, n) {
+  G.wanted = Math.min(5, G.wanted + n);
+  G.heat = Math.min(100, G.heat + 35 * n);
 }
 
-export function addHeat(G, n) {
-  const before = G.wanted;
-  G.heat = Math.min(100, G.heat + n);
-  G.wanted = starsFromHeat(G.heat);
-  if (G.wanted > before && G.wanted > 0) {
-    pushMessage(G, 'Dispatch', `Wanted level ${G.wanted}. Units responding.`);
-    G.audio.phone();
+export function updateWanted(G, dt) {
+  if (G.wanted > 0) {
+    G.heat -= dt * 4.5; // laying low cools the heat
+    if (G.heat <= 0) {
+      G.heat = 0;
+      G.wanted = Math.max(0, G.wanted - 1);
+      if (G.wanted > 0) G.heat = 55;
+    }
   }
-}
-
-export function spawnPoliceCar(G) {
-  const p = randomRoadPoint(G.rng, G.city);
-  const car = createCar(p.x, p.y, p.angle, '#1a2a4a', 'police');
-  car.speed = 200;
-  G.cars.push(car);
-  return car;
-}
-
-function policeCount(G) {
-  let n = 0;
-  for (const car of G.cars) if (car.kind === 'police' && !car.wrecked) n++;
-  return n;
+  // Spawn cops to match the wanted level (max 1 + wanted).
+  const wantCops = G.wanted === 0 ? 0 : 1 + G.wanted;
+  const cops = G.cars.filter((c) => c.police && !c.wrecked);
+  if (cops.length < wantCops) {
+    const p = randomRoadPoint(G.city, G.rng);
+    const dx = G.player.x - p.x; const dy = G.player.y - p.y;
+    // spawn the cop a fair distance away, on a road
+    const cop = createCar(p.x, p.y, Math.atan2(dy, dx), '#111827', true);
+    cop.driver = 'cop';
+    cop.cruise = 300;
+    G.cars.push(cop);
+    G.audio.setSiren(true);
+  }
+  if (G.wanted === 0 && cops.length === 0) G.audio.setSiren(false);
+  // BUSTED: a cop sitting on top of a slow player fills the meter.
+  const p = G.player;
+  const pSpeed = p.onFoot ? (p.moving ? 200 : 0) : Math.abs(p.car ? p.car.speed : 0);
+  let near = false;
+  for (const cop of cops) {
+    const d = Math.hypot(cop.x - p.x, cop.y - p.y);
+    if (d < 70 && pSpeed < 90) near = true;
+  }
+  if (near) {
+    G.busted += dt * 0.55;
+    if (G.busted >= 1) {
+      G.mode = 'busted';
+      G.audio.setEngine(false, 0);
+      G.audio.setSiren(false);
+      G.audio.busted();
+    }
+  } else {
+    G.busted = Math.max(0, G.busted - dt * 0.4);
+  }
 }
 
 export function updatePolice(G, dt) {
-  // Heat decays when no crime happened recently.
-  G.heat = Math.max(0, G.heat - dt * (G.wanted > 0 ? 1.1 : 2.5));
-  const newStars = starsFromHeat(G.heat);
-  if (newStars !== G.wanted) G.wanted = newStars;
-  const want = G.wanted === 0 ? 0 : Math.min(5, G.wanted + 1);
-  if (policeCount(G) < want && G.rng.chance(0.03)) spawnPoliceCar(G);
-  const p = G.player;
-  const playerSpeed = p.onFoot ? p.speed : Math.abs(p.car ? p.car.speed : 0);
-  for (const car of G.cars) {
-    if (car.kind !== 'police' || car.wrecked) continue;
-    const dx = p.x - car.x;
-    const dy = p.y - car.y;
-    const d = Math.hypot(dx, dy);
-    if (d > 1600) {
-      // Teleport far cops back onto a road near the player.
-      const np = randomRoadPoint(G.rng, G.city);
-      car.x = np.x;
-      car.y = np.y;
-      car.speed = 200;
-      continue;
-    }
-    const targetAngle = Math.atan2(dy, dx);
-    let diff = targetAngle - car.angle;
+  for (const cop of G.cars) {
+    if (cop.driver !== 'cop' || cop.wrecked) continue;
+    const p = G.player;
+    const dx = p.x - cop.x; const dy = p.y - cop.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const wantAngle = Math.atan2(dy, dx);
+    let diff = wantAngle - cop.angle;
     while (diff > Math.PI) diff -= Math.PI * 2;
     while (diff < -Math.PI) diff += Math.PI * 2;
-    const control = {
-      throttle: d > 60 ? 1 : 0.4,
-      brake: d < 40 ? 0.6 : 0,
-      steer: Math.max(-1, Math.min(1, diff * 2.2)),
-    };
-    stepCar(G, car, dt, control);
-    // Ram: contact with the player hurts and slows.
-    if (d < 36) {
+    cop.angle += Math.max(-2.4 * dt, Math.min(2.4 * dt, diff * 3 * dt));
+    const speed = dist > 320 ? 430 : 300;
+    cop.speed += (speed - cop.speed) * 1.2 * dt;
+    const nx = cop.x + Math.cos(cop.angle) * cop.speed * dt;
+    const ny = cop.y + Math.sin(cop.angle) * cop.speed * dt;
+    // Cops drive around buildings, never through them.
+    if (!collideBuildings(G.city, nx, cop.y, 20)) cop.x = nx;
+    if (!collideBuildings(G.city, cop.x, ny, 20)) cop.y = ny;
+    // Ram the player: damage on contact, harder at speed.
+    if (dist < 42) {
+      const ram = Math.abs(cop.speed);
       if (p.onFoot) {
-        damagePlayer(G, 16 * dt);
+        if (ram > 120) {
+          p.x += (dx / dist) * 14; p.y += (dy / dist) * 14;
+          damagePlayerDirect(G, 8);
+        }
       } else if (p.car) {
-        damageCar(G, p.car, 12 * dt);
-        car.speed *= 0.92;
-        if (G.rng.chance(0.05)) G.audio.crash();
+        if (ram > 100) {
+          p.car.speed *= 0.75;
+          damageCarDirect(G, p.car, 4);
+          G.audio.crash();
+        }
       }
-      // BUSTED fills when a cop is on top of a slow player.
-      if (playerSpeed < 60) {
-        G.busted = Math.min(100, G.busted + dt * 26);
-      }
+      // shove the cop off so it does not stick inside the player
+      cop.x -= Math.cos(cop.angle) * 30 * dt * 10;
+      cop.y -= Math.sin(cop.angle) * 30 * dt * 10;
     }
+    // Cops despawn far away when the heat is gone.
+    if (G.wanted === 0 && dist > 1600) cop.wrecked = true;
   }
-  // Busted meter drains when the player escapes the cops.
-  const nearestCop = nearestPoliceDist(G);
-  if (nearestCop > 260 || playerSpeed > 120) {
-    G.busted = Math.max(0, G.busted - dt * 14);
-  }
-  if (G.busted >= 100) {
-    G.state = 'busted';
-    G.audio.busted();
-    pushMessage(G, 'Dispatch', 'Suspect in custody.');
-  }
-  // Siren wails while wanted.
-  G.audio.siren(G.wanted > 0 && G.state === 'playing', G.time);
-  // Foot cops: spawn when wanted and the player is on foot and slow.
-  if (G.wanted >= 2 && p.onFoot && G.cops.length < G.wanted && G.rng.chance(0.01)) {
-    G.cops.push({ x: p.x + G.rng.range(-300, 300), y: p.y + G.rng.range(-300, 300), angle: 0, speed: 150 });
-  }
-  for (const cop of G.cops) {
-    const dx = p.x - cop.x;
-    const dy = p.y - cop.y;
-    const d = Math.hypot(dx, dy);
-    if (d > 900) {
-      cop.x = p.x + G.rng.range(-260, 260);
-      cop.y = p.y + G.rng.range(-260, 260);
-    } else if (d > 24) {
-      cop.angle = Math.atan2(dy, dx);
-      cop.x += Math.cos(cop.angle) * cop.speed * dt;
-      cop.y += Math.sin(cop.angle) * cop.speed * dt;
-      if (d < 30) damagePlayer(G, 8 * dt);
-    }
-  }
+  // prune wrecked cop cars so the list stays short
+  G.cars = G.cars.filter((c) => !(c.police && c.wrecked && Math.hypot(c.x - G.player.x, c.y - G.player.y) > 900));
 }
 
-function nearestPoliceDist(G) {
-  let best = Infinity;
-  for (const car of G.cars) {
-    if (car.kind !== 'police' || car.wrecked) continue;
-    best = Math.min(best, Math.hypot(car.x - G.player.x, car.y - G.player.y));
-  }
-  for (const cop of G.cops) best = Math.min(best, Math.hypot(cop.x - G.player.x, cop.y - G.player.y));
-  return best;
+function damagePlayerDirect(G, amount) {
+  const p = G.player;
+  if (G.mode !== 'play') return;
+  p.hp -= amount; p.hurtFlash = 0.3;
+  if (p.hp <= 0) { p.hp = 0; G.mode = 'wasted'; G.audio.setEngine(false, 0); G.audio.setSiren(false); }
 }
 
-export function clearPolice(G) {
-  G.cars = G.cars.filter((c) => c.kind !== 'police');
-  G.cops = [];
-  G.heat = 0;
-  G.wanted = 0;
-  G.busted = 0;
+function damageCarDirect(G, car, amount) {
+  car.hp -= amount;
+  if (car.hp <= 0 && !car.wrecked) {
+    car.wrecked = true; car.speed = 0;
+    G.audio.crash();
+    if (car.driver === 'player') { G.player.onFoot = true; G.player.car = null; }
+  }
 }
 
 export function drawPolice(ctx, G) {
-  for (const car of G.cars) {
-    if (car.kind !== 'police') continue;
-    drawCar(ctx, car);
-    // Flashing light bar.
-    const on = Math.floor(G.time * 6) % 2 === 0;
-    ctx.fillStyle = on ? '#ff2a2a' : '#2a6aff';
-    ctx.beginPath();
-    ctx.arc(car.x - Math.sin(car.angle) * 0, car.y, 5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  for (const cop of G.cops) {
-    ctx.save();
-    ctx.translate(cop.x, cop.y);
-    ctx.rotate(cop.angle);
-    ctx.fillStyle = '#1a2a4a';
-    ctx.beginPath();
-    ctx.arc(0, 0, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#f2c89a';
-    ctx.beginPath();
-    ctx.arc(3, 0, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
+  for (const car of G.cars) if (car.police) drawCar(ctx, car);
 }
