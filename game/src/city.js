@@ -1,342 +1,357 @@
-// city.js — Coral Marina: a seeded procedural city on a 3200x3200 world.
-// A regular street grid (roads every 400px, 104px wide) leaves square
-// blocks that are filled with buildings, sidewalks and palm trees. The
-// south-east corner is the marina: water, a boardwalk and dock fingers.
+// city.js — Coral Marina: a 3200x3200 procedurally generated coastal
+// city. A street grid with city blocks, palm trees, and water with a
+// marina along the east and south edges. Everything is derived from the
+// seed via Rng, so seed 7 always builds the same city.
 
-import { makeRng, clamp } from './rng.js';
+import { Rng } from './rng.js';
 
 export const WORLD = 3200;
-export const CELL = 400;      // distance between street centrelines
-export const ROAD = 104;      // road width
-export const WATER_X = 2720;  // water starts at this x (east edge)
-export const WATER_Y = 2560;  // ...and below this y in the south
+export const BLOCK = 256; // distance between street centrelines
+export const ROAD_W = 76; // full road width
+export const WATER_X = 2880; // water east of this line
+export const WATER_Y = 2880; // water south of this line
 
 const BUILDING_COLORS = [
-  '#e8b4a0', '#d98e73', '#f2d5a7', '#a8c8bc', '#8fb6c9', '#e6e0f0',
-  '#f0c8c8', '#cfe0b8', '#ffd9a0', '#b8c4de', '#e8a2b4', '#9fd8c9',
+  '#e8b4a0', '#f2d5a7', '#a8c8ec', '#f7e8c9', '#d98e7e', '#9fd8c9',
+  '#f4a9c0', '#cbb8ea', '#ffe3a3', '#b5e0a8', '#f9c784', '#a3d2f0',
 ];
-const ROOF_COLORS = ['#8a5a4a', '#6e7f8a', '#96705a', '#5f7263', '#7a6a8a', '#a0522d'];
+const ROOF_COLORS = ['#8a4b3a', '#5d6d7e', '#7a5c48', '#49657a', '#6e4a5e', '#546e4a'];
 
 export function isWater(x, y) {
-  return x > WATER_X || (x > 2080 && y > WATER_Y);
+  return x > WATER_X || y > WATER_Y;
 }
 
-export function roadCoord(v) {
-  // Position inside the repeating 400px cell: < ROAD/2 either side of a
-  // street centreline counts as road.
-  const m = ((v % CELL) + CELL) % CELL;
-  return Math.min(m, CELL - m) < ROAD / 2;
+export function isOnRoad(x, y) {
+  if (isWater(x, y)) return false;
+  const mx = ((x % BLOCK) + BLOCK) % BLOCK;
+  const my = ((y % BLOCK) + BLOCK) % BLOCK;
+  const half = ROAD_W / 2;
+  return mx < half || mx > BLOCK - half || my < half || my > BLOCK - half;
 }
 
-export function onRoad(x, y) {
-  return roadCoord(x) || roadCoord(y);
+// Distance from a point to the nearest road centreline axis, used to
+// keep buildings and palms off the asphalt.
+function axisDist(v) {
+  const m = ((v % BLOCK) + BLOCK) % BLOCK;
+  return Math.min(m, BLOCK - m);
 }
 
-export function nearestRoadCenter(v) {
-  return Math.round(v / CELL) * CELL;
-}
+export function generateCity(seed) {
+  const rng = new Rng(seed * 7919 + 13);
+  const buildings = [];
+  const palms = [];
+  const lamps = [];
+  const parkedSpots = [];
+  const docks = [];
+  const boats = [];
 
-export class City {
-  constructor(seed) {
-    const rng = makeRng(seed);
-    this.seed = seed;
-    this.buildings = [];
-    this.palms = [];
-    this.lamps = [];
-    this.props = [];
-    this.colliders = [];
-
-    for (let bx = 0; bx < WORLD / CELL; bx++) {
-      for (let by = 0; by < WORLD / CELL; by++) {
-        const x0 = bx * CELL + ROAD / 2 + 14;
-        const y0 = by * CELL + ROAD / 2 + 14;
-        const size = CELL - ROAD - 28;
-        // Skip blocks that fall in the marina water.
-        if (isWater(x0 + size / 2, y0 + size / 2)) continue;
-        const layout = rng.int(1, 3);
-        if (layout === 1) {
-          this.addBuilding(rng, x0 + 8, y0 + 8, size - 16, size - 16);
-        } else if (layout === 2) {
-          const half = size / 2 - 6;
-          this.addBuilding(rng, x0, y0, half, half);
-          this.addBuilding(rng, x0 + size - half, y0, half, half);
-          this.addBuilding(rng, x0, y0 + size - half, half, half);
-          this.addBuilding(rng, x0 + size - half, y0 + size - half, half, half);
-        } else {
-          const w = size * rng.float(0.55, 0.8);
-          const h = size * rng.float(0.5, 0.75);
-          this.addBuilding(rng, x0 + (size - w) / 2, y0 + (size - h) / 2, w, h);
-          // A small plaza prop in the leftover corner.
-          this.props.push({
-            x: x0 + rng.float(20, size - 20), y: y0 + rng.float(20, size - 20),
-            r: rng.float(6, 11), kind: rng.pick(['planter', 'bench', 'kiosk']),
+  // City blocks sit between streets: block (bx,by) spans
+  // [bx*BLOCK + ROAD_W/2, (bx+1)*BLOCK - ROAD_W/2] on each axis.
+  const inset = ROAD_W / 2 + 8;
+  for (let bx = 0; bx < WORLD / BLOCK; bx++) {
+    for (let by = 0; by < WORLD / BLOCK; by++) {
+      const x0 = bx * BLOCK + inset;
+      const y0 = by * BLOCK + inset;
+      const size = BLOCK - inset * 2;
+      if (isWater(x0 + size / 2, y0 + size / 2)) continue;
+      const style = rng.int(0, 2);
+      if (style === 0) {
+        // One big building per block.
+        buildings.push({
+          x: x0 + 6, y: y0 + 6, w: size - 12, h: size - 12,
+          color: rng.pick(BUILDING_COLORS), roof: rng.pick(ROOF_COLORS),
+          floors: rng.int(2, 9),
+        });
+      } else if (style === 1) {
+        // Four smaller buildings.
+        const half = size / 2;
+        for (let i = 0; i < 2; i++) {
+          for (let j = 0; j < 2; j++) {
+            buildings.push({
+              x: x0 + i * half + 5, y: y0 + j * half + 5,
+              w: half - 10, h: half - 10,
+              color: rng.pick(BUILDING_COLORS), roof: rng.pick(ROOF_COLORS),
+              floors: rng.int(1, 5),
+            });
+          }
+        }
+      } else {
+        // Plaza block: one low building plus palms.
+        buildings.push({
+          x: x0 + size * 0.25, y: y0 + size * 0.25, w: size * 0.5, h: size * 0.5,
+          color: rng.pick(BUILDING_COLORS), roof: rng.pick(ROOF_COLORS),
+          floors: 1,
+        });
+        for (let k = 0; k < 5; k++) {
+          palms.push({
+            x: x0 + rng.range(8, size - 8),
+            y: y0 + rng.range(8, size - 8),
+            s: rng.range(0.8, 1.3),
           });
         }
-        // Palms along the block edge.
-        const palmCount = rng.int(2, 5);
-        for (let i = 0; i < palmCount; i++) {
-          const edge = rng.int(0, 3);
-          let px = x0;
-          let py = y0;
-          if (edge === 0) { px = x0 + rng.float(0, size); py = y0 - 6; }
-          if (edge === 1) { px = x0 + rng.float(0, size); py = y0 + size + 6; }
-          if (edge === 2) { px = x0 - 6; py = y0 + rng.float(0, size); }
-          if (edge === 3) { px = x0 + size + 6; py = y0 + rng.float(0, size); }
-          if (!isWater(px, py)) this.palms.push({ x: px, y: py, s: rng.float(0.8, 1.3), sway: rng.float(0, 6.28) });
+      }
+    }
+  }
+
+  // Palm rows along the beach promenade and scattered on sidewalks.
+  for (let y = 200; y < WATER_Y - 60; y += 90) {
+    palms.push({ x: WATER_X - 46 + rng.range(-6, 6), y, s: rng.range(0.9, 1.4) });
+  }
+  for (let x = 200; x < WATER_X - 60; x += 90) {
+    palms.push({ x, y: WATER_Y - 46 + rng.range(-6, 6), s: rng.range(0.9, 1.4) });
+  }
+  for (let i = 0; i < 130; i++) {
+    const x = rng.range(60, WATER_X - 40);
+    const y = rng.range(60, WATER_Y - 40);
+    if (axisDist(x) > ROAD_W / 2 + 14 && axisDist(y) > ROAD_W / 2 + 14) {
+      palms.push({ x, y, s: rng.range(0.75, 1.25) });
+    }
+  }
+
+  // Street lamps at intersections.
+  for (let gx = 0; gx <= WORLD / BLOCK; gx++) {
+    for (let gy = 0; gy <= WORLD / BLOCK; gy++) {
+      const x = gx * BLOCK;
+      const y = gy * BLOCK;
+      if (!isWater(x, y)) lamps.push({ x: x + ROAD_W / 2 + 6, y: y + ROAD_W / 2 + 6 });
+    }
+  }
+
+  // Parked-car spots hug the kerbs of horizontal streets.
+  for (let gy = 0; gy < WORLD / BLOCK; gy++) {
+    for (let gx = 0; gx < WORLD / BLOCK; gx++) {
+      if (!rng.chance(0.55)) continue;
+      const x = gx * BLOCK + rng.range(70, 180);
+      const y = gy * BLOCK + (rng.chance(0.5) ? ROAD_W / 2 - 13 : -ROAD_W / 2 + 13);
+      if (y < 20 || isWater(x, y)) continue;
+      parkedSpots.push({ x, y, angle: 0 });
+    }
+  }
+
+  // Marina: wooden docks reaching into the eastern water, with boats.
+  for (let i = 0; i < 5; i++) {
+    const y = 420 + i * 470 + rng.range(-40, 40);
+    const len = rng.range(150, 240);
+    docks.push({ x: WATER_X, y, len, w: 26 });
+    const n = rng.int(2, 4);
+    for (let b = 0; b < n; b++) {
+      boats.push({
+        x: WATER_X + 40 + (len - 60) * (b / Math.max(1, n - 1)) + rng.range(-8, 8),
+        y: y + (b % 2 === 0 ? -30 : 30),
+        angle: rng.range(-0.15, 0.15),
+        color: rng.pick(['#ffffff', '#ffd9d0', '#cfe8ff', '#fff3b0', '#ffc7e3']),
+        len: rng.range(34, 52),
+      });
+    }
+  }
+  // A couple of docks on the southern shore too.
+  for (let i = 0; i < 3; i++) {
+    const x = 700 + i * 800 + rng.range(-40, 40);
+    const len = rng.range(140, 210);
+    docks.push({ x, y: WATER_Y, len, w: 26, vertical: true });
+    boats.push({
+      x: x - 30, y: WATER_Y + 60 + rng.range(0, len - 80),
+      angle: Math.PI / 2 + rng.range(-0.12, 0.12),
+      color: rng.pick(['#ffffff', '#ffe9a8', '#d6f5ff']),
+      len: rng.range(34, 48),
+    });
+  }
+
+  // Marisol Vega's corner: on the beach promenade by the marina,
+  // east of the last building line so she is always reachable.
+  const marisol = { x: WATER_X - 56, y: 640 };
+
+  return {
+    seed,
+    buildings,
+    palms,
+    lamps,
+    parkedSpots,
+    docks,
+    boats,
+    marisol,
+  };
+}
+
+// Solid-rectangle collision for buildings. Returns true if the circle
+// at (x,y,r) overlaps any building.
+export function hitsBuilding(city, x, y, r) {
+  for (const b of city.buildings) {
+    if (x + r > b.x && x - r < b.x + b.w && y + r > b.y && y - r < b.y + b.h) {
+      return b;
+    }
+  }
+  return null;
+}
+
+// Clamp a position into the walkable land area (not deep water, not
+// outside the world).
+export function clampToLand(x, y, r) {
+  return {
+    x: Math.max(r, Math.min(WORLD - r, x)),
+    y: Math.max(r, Math.min(WORLD - r, y)),
+  };
+}
+
+export function drawCity(ctx, city, cam) {
+  const vx = cam.x;
+  const vy = cam.y;
+  const vw = cam.w;
+  const vh = cam.h;
+
+  // Water base everywhere; land is drawn over it.
+  ctx.fillStyle = '#1d6f9f';
+  ctx.fillRect(0, 0, vw, vh);
+  // Water sparkle bands (cheap, deterministic by world position).
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  const bandStep = 90;
+  const startBand = Math.floor(vy / bandStep) * bandStep;
+  for (let wy = startBand; wy < vy + vh + bandStep; wy += bandStep) {
+    ctx.fillRect(0, wy - vy + ((wy / bandStep) % 2) * 30, vw, 3);
+  }
+
+  // Landmass.
+  ctx.fillStyle = '#79b657';
+  const landW = Math.min(vw, WATER_X - vx);
+  const landH = Math.min(vh, WATER_Y - vy);
+  if (landW > 0 && landH > 0) ctx.fillRect(0, 0, landW, landH);
+
+  // Sandy beach strip along both shores.
+  ctx.fillStyle = '#ecd28f';
+  if (WATER_X - vx > 0 && WATER_X - vx < vw) {
+    ctx.fillRect(WATER_X - vx - 26, 0, 26, Math.min(vh, WATER_Y - vy + 26));
+  }
+  if (WATER_Y - vy > 0 && WATER_Y - vy < vh) {
+    ctx.fillRect(0, WATER_Y - vy - 26, Math.min(vw, WATER_X - vx + 26), 26);
+  }
+
+  drawRoads(ctx, vx, vy, vw, vh);
+  drawBlocks(ctx, city, vx, vy, vw, vh);
+  drawMarina(ctx, city, vx, vy);
+}
+
+function drawRoads(ctx, vx, vy, vw, vh) {
+  ctx.fillStyle = '#3c4148';
+  // Vertical streets.
+  for (let gx = 0; gx <= WORLD / BLOCK; gx++) {
+    const sx = gx * BLOCK - vx;
+    if (sx + ROAD_W / 2 < 0 || sx - ROAD_W / 2 > vw) continue;
+    const top = Math.max(0, -vy);
+    const bottom = Math.min(vh, WATER_Y - vy);
+    if (bottom > top) ctx.fillRect(sx - ROAD_W / 2, top, ROAD_W, bottom - top);
+  }
+  // Horizontal streets.
+  for (let gy = 0; gy <= WORLD / BLOCK; gy++) {
+    const sy = gy * BLOCK - vy;
+    if (sy + ROAD_W / 2 < 0 || sy - ROAD_W / 2 > vh) continue;
+    const left = Math.max(0, -vx);
+    const right = Math.min(vw, WATER_X - vx);
+    if (right > left) ctx.fillRect(left, sy - ROAD_W / 2, right - left, ROAD_W);
+  }
+  // Centre dashes.
+  ctx.fillStyle = '#e8d44d';
+  const dash = 26;
+  const gap = 20;
+  for (let gx = 0; gx <= WORLD / BLOCK; gx++) {
+    const sx = gx * BLOCK - vx;
+    if (sx < -4 || sx > vw + 4) continue;
+    for (let wy = 0; wy < WATER_Y; wy += dash + gap) {
+      const sy = wy - vy;
+      if (sy > -dash && sy < vh) ctx.fillRect(sx - 2, sy, 4, dash);
+    }
+  }
+  for (let gy = 0; gy <= WORLD / BLOCK; gy++) {
+    const sy = gy * BLOCK - vy;
+    if (sy < -4 || sy > vh + 4) continue;
+    for (let wx = 0; wx < WATER_X; wx += dash + gap) {
+      const sx = wx - vx;
+      if (sx > -dash && sx < vw) ctx.fillRect(sx, sy - 2, dash, 4);
+    }
+  }
+}
+
+function drawBlocks(ctx, city, vx, vy, vw, vh) {
+  for (const b of city.buildings) {
+    const sx = b.x - vx;
+    const sy = b.y - vy;
+    if (sx + b.w < 0 || sy + b.h < 0 || sx > vw || sy > vh) continue;
+    // Sidewalk apron.
+    ctx.fillStyle = '#c9c2b4';
+    ctx.fillRect(sx - 5, sy - 5, b.w + 10, b.h + 10);
+    // Drop shadow then body.
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fillRect(sx + 6, sy + 8, b.w, b.h);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(sx, sy, b.w, b.h);
+    // Roof inset.
+    ctx.fillStyle = b.roof;
+    const inset = 8 + b.floors;
+    ctx.fillRect(sx + inset, sy + inset, Math.max(4, b.w - inset * 2), Math.max(4, b.h - inset * 2));
+    // Window dots on tall buildings.
+    if (b.floors >= 3) {
+      ctx.fillStyle = 'rgba(255,255,220,0.5)';
+      const step = 22;
+      for (let wx = sx + 12; wx < sx + b.w - 10; wx += step) {
+        for (let wy = sy + 12; wy < sy + b.h - 10; wy += step) {
+          ctx.fillRect(wx, wy, 5, 5);
         }
       }
     }
-
-    // Street lamps at intersections.
-    for (let gx = 0; gx <= WORLD / CELL; gx++) {
-      for (let gy = 0; gy <= WORLD / CELL; gy++) {
-        const x = gx * CELL;
-        const y = gy * CELL;
-        if (!isWater(x, y)) this.lamps.push({ x: x + ROAD / 2 + 8, y: y + ROAD / 2 + 8 });
-      }
-    }
-
-    // Marina docks: wooden fingers reaching into the water.
-    this.docks = [];
-    for (let i = 0; i < 5; i++) {
-      this.docks.push({ x: WATER_X + 30, y: 420 + i * 420, w: 210, h: 26 });
-    }
-    // Beach palms near the water line.
-    for (let i = 0; i < 26; i++) {
-      const x = WATER_X - rng.float(20, 90);
-      const y = rng.float(80, WATER_Y - 60);
-      this.palms.push({ x, y, s: rng.float(0.9, 1.5), sway: rng.float(0, 6.28) });
-    }
   }
-
-  addBuilding(rng, x, y, w, h) {
-    const b = {
-      x, y, w, h,
-      color: rng.pick(BUILDING_COLORS),
-      roof: rng.pick(ROOF_COLORS),
-      floors: rng.int(2, 9),
-      seed: rng.int(1, 99999),
-    };
-    this.buildings.push(b);
-    this.colliders.push(b);
-    return b;
-  }
-
-  collideCircle(x, y, r) {
-    // Push a circle out of every building rect; returns corrected position.
-    let nx = x;
-    let ny = y;
-    for (const b of this.colliders) {
-      const cx = clamp(nx, b.x, b.x + b.w);
-      const cy = clamp(ny, b.y, b.y + b.h);
-      const dx = nx - cx;
-      const dy = ny - cy;
-      const d2 = dx * dx + dy * dy;
-      if (d2 < r * r) {
-        if (d2 > 0.0001) {
-          const d = Math.sqrt(d2);
-          nx = cx + (dx / d) * r;
-          ny = cy + (dy / d) * r;
-        } else {
-          // Centre inside the rect: push out along the smallest axis.
-          const left = nx - b.x;
-          const right = b.x + b.w - nx;
-          const top = ny - b.y;
-          const bottom = b.y + b.h - ny;
-          const m = Math.min(left, right, top, bottom);
-          if (m === left) nx = b.x - r;
-          else if (m === right) nx = b.x + b.w + r;
-          else if (m === top) ny = b.y - r;
-          else ny = b.y + b.h + r;
-        }
-      }
-    }
-    nx = clamp(nx, r, WORLD - r);
-    ny = clamp(ny, r, WORLD - r);
-    return { x: nx, y: ny };
-  }
-
-  rectHitsBuilding(x, y, w, h) {
-    for (const b of this.colliders) {
-      if (x < b.x + b.w && x + w > b.x && y < b.y + b.h && y + h > b.y) return b;
-    }
-    return null;
-  }
-
-  draw(ctx, cam, vw, vh, time) {
-    const x0 = cam.x - 60;
-    const y0 = cam.y - 60;
-    const x1 = cam.x + vw + 60;
-    const y1 = cam.y + vh + 60;
-
-    // Ground: warm sand-grass base.
-    ctx.fillStyle = '#cdb98a';
-    ctx.fillRect(cam.x, cam.y, vw, vh);
-
-    // Water (drawn over the base where the marina is).
-    ctx.fillStyle = '#2e7fa8';
-    ctx.fillRect(Math.max(x0, WATER_X), Math.max(y0, 0), x1 - Math.max(x0, WATER_X), y1 - Math.max(y0, 0));
-    ctx.fillStyle = '#2e7fa8';
-    ctx.fillRect(Math.max(x0, 2080), Math.max(y0, WATER_Y), x1 - Math.max(x0, 2080), y1 - Math.max(y0, WATER_Y));
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 2;
+  // Palms: trunk + fronds.
+  for (const p of city.palms) {
+    const sx = p.x - vx;
+    const sy = p.y - vy;
+    if (sx < -30 || sy < -30 || sx > vw + 30 || sy > vh + 30) continue;
+    ctx.strokeStyle = '#8a6b42';
+    ctx.lineWidth = 3 * p.s;
     ctx.beginPath();
-    for (let i = 0; i < 12; i++) {
-      const wy = ((i * 173 + Math.floor(time * 30)) % 900) + Math.floor(y0 / 900) * 900;
-      if (wy > y0 && wy < y1) {
-        ctx.moveTo(WATER_X + 30 + (i % 4) * 90, wy);
-        ctx.lineTo(WATER_X + 90 + (i % 4) * 90, wy);
-      }
-    }
+    ctx.moveTo(sx, sy);
+    ctx.lineTo(sx + 3 * p.s, sy - 10 * p.s);
     ctx.stroke();
-    // Sand beach strip along the water line.
-    ctx.fillStyle = '#ecd9a0';
-    ctx.fillRect(WATER_X - 26, Math.max(y0, 0), 26, y1 - Math.max(y0, 0));
-    ctx.fillRect(2080, WATER_Y - 26, x1 - 2080, 26);
-
-    // Docks.
-    for (const d of this.docks) {
-      if (d.x > x1 || d.x + d.w < x0 || d.y > y1 || d.y + d.h < y0) continue;
-      ctx.fillStyle = '#8a6a48';
-      ctx.fillRect(d.x, d.y, d.w, d.h);
-      ctx.fillStyle = '#a37f56';
-      for (let px = d.x + 8; px < d.x + d.w; px += 26) ctx.fillRect(px, d.y + 3, 16, d.h - 6);
-    }
-
-    // Roads: vertical then horizontal bands, with sidewalks.
-    ctx.fillStyle = '#9a958c';
-    for (let gx = 0; gx <= WORLD / CELL; gx++) {
-      const rx = gx * CELL - ROAD / 2 - 8;
-      if (rx + ROAD + 16 < x0 || rx > x1) continue;
-      ctx.fillRect(rx, Math.max(y0, 0), ROAD + 16, Math.min(y1, WORLD) - Math.max(y0, 0));
-    }
-    for (let gy = 0; gy <= WORLD / CELL; gy++) {
-      const ry = gy * CELL - ROAD / 2 - 8;
-      if (ry + ROAD + 16 < y0 || ry > y1) continue;
-      ctx.fillRect(Math.max(x0, 0), ry, Math.min(x1, WORLD) - Math.max(x0, 0), ROAD + 16);
-    }
-    ctx.fillStyle = '#4c4c52';
-    for (let gx = 0; gx <= WORLD / CELL; gx++) {
-      const rx = gx * CELL - ROAD / 2;
-      if (rx + ROAD < x0 || rx > x1) continue;
-      if (gx * CELL > WATER_X + 40) continue;
-      ctx.fillRect(rx, Math.max(y0, 0), ROAD, Math.min(y1, WORLD) - Math.max(y0, 0));
-    }
-    for (let gy = 0; gy <= WORLD / CELL; gy++) {
-      const ry = gy * CELL - ROAD / 2;
-      if (ry + ROAD < y0 || ry > y1) continue;
-      ctx.fillRect(Math.max(x0, 0), ry, Math.min(x1, gy * CELL > WATER_Y ? WORLD : WORLD) - Math.max(x0, 0), ROAD);
-    }
-    // Centre dashes.
-    ctx.fillStyle = '#e8d878';
-    for (let gx = 0; gx <= WORLD / CELL; gx++) {
-      const cx = gx * CELL;
-      if (cx < x0 || cx > x1 || cx > WATER_X + 40) continue;
-      for (let y = Math.floor(y0 / 44) * 44; y < y1; y += 44) {
-        if (!roadCoord(y)) ctx.fillRect(cx - 2, y, 4, 24);
-      }
-    }
-    for (let gy = 0; gy <= WORLD / CELL; gy++) {
-      const cy = gy * CELL;
-      if (cy < y0 || cy > y1) continue;
-      for (let x = Math.floor(x0 / 44) * 44; x < x1; x += 44) {
-        if (!roadCoord(x)) ctx.fillRect(x, cy - 2, 24, 4);
-      }
-    }
-
-    // Block ground (plazas / pavement inside blocks).
-    ctx.fillStyle = '#bfb49a';
-    for (let bx = 0; bx < WORLD / CELL; bx++) {
-      for (let by = 0; by < WORLD / CELL; by++) {
-        const px = bx * CELL + ROAD / 2 + 8;
-        const py = by * CELL + ROAD / 2 + 8;
-        const size = CELL - ROAD - 16;
-        if (px + size < x0 || px > x1 || py + size < y0 || py > y1) continue;
-        if (isWater(px + size / 2, py + size / 2)) continue;
-        ctx.fillRect(px, py, size, size);
-      }
-    }
-
-    // Props.
-    for (const p of this.props) {
-      if (p.x < x0 || p.x > x1 || p.y < y0 || p.y > y1) continue;
-      if (p.kind === 'kiosk') {
-        ctx.fillStyle = '#c9553e';
-        ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, p.r * 2);
-        ctx.fillStyle = '#f2e3c8';
-        ctx.fillRect(p.x - p.r, p.y - p.r, p.r * 2, 4);
-      } else if (p.kind === 'bench') {
-        ctx.fillStyle = '#7a5c3e';
-        ctx.fillRect(p.x - p.r, p.y - 3, p.r * 2, 6);
-      } else {
-        ctx.fillStyle = '#5f8263';
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-
-    // Buildings with simple window grids (deterministic per building).
-    for (const b of this.buildings) {
-      if (b.x + b.w < x0 || b.x > x1 || b.y + b.h < y0 || b.y > y1) continue;
-      ctx.fillStyle = 'rgba(0,0,0,0.22)';
-      ctx.fillRect(b.x + 7, b.y + 9, b.w, b.h);
-      ctx.fillStyle = b.color;
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-      ctx.fillStyle = b.roof;
-      ctx.fillRect(b.x + 5, b.y + 5, b.w - 10, b.h - 10);
-      ctx.fillStyle = 'rgba(255,244,200,0.75)';
-      const cols = Math.max(2, Math.floor(b.w / 26));
-      const rows = Math.max(2, Math.floor(b.h / 26));
-      let s = b.seed;
-      for (let cx = 0; cx < cols; cx++) {
-        for (let cy = 0; cy < rows; cy++) {
-          s = (Math.imul(s, 1103515245) + 12345) | 0;
-          if (((s >>> 16) & 3) === 0) continue;
-          ctx.fillRect(b.x + 10 + cx * 24, b.y + 10 + cy * 24, 11, 13);
-        }
-      }
-    }
-
-    // Palms.
-    for (const p of this.palms) {
-      if (p.x < x0 - 30 || p.x > x1 + 30 || p.y < y0 - 30 || p.y > y1 + 30) continue;
-      const sway = Math.sin(time * 1.4 + p.sway) * 2.2;
-      ctx.strokeStyle = '#8a6a48';
-      ctx.lineWidth = 4 * p.s;
+    ctx.strokeStyle = '#2e8b3a';
+    ctx.lineWidth = 2.4 * p.s;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + p.x * 0.01;
       ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.quadraticCurveTo(p.x + sway, p.y - 12 * p.s, p.x + sway * 1.6, p.y - 20 * p.s);
+      ctx.moveTo(sx + 3 * p.s, sy - 10 * p.s);
+      ctx.quadraticCurveTo(
+        sx + 3 * p.s + Math.cos(a) * 9 * p.s,
+        sy - 10 * p.s + Math.sin(a) * 5 * p.s - 3,
+        sx + 3 * p.s + Math.cos(a) * 15 * p.s,
+        sy - 10 * p.s + Math.sin(a) * 8 * p.s + 3,
+      );
       ctx.stroke();
-      ctx.strokeStyle = '#3f9e58';
-      ctx.lineWidth = 3;
-      const tx = p.x + sway * 1.6;
-      const ty = p.y - 20 * p.s;
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2 + p.sway;
-        ctx.beginPath();
-        ctx.moveTo(tx, ty);
-        ctx.quadraticCurveTo(
-          tx + Math.cos(a) * 12 * p.s, ty + Math.sin(a) * 7 * p.s - 3,
-          tx + Math.cos(a) * 19 * p.s, ty + Math.sin(a) * 10 * p.s + 4,
-        );
-        ctx.stroke();
-      }
     }
+  }
+}
 
-    // Lamps.
-    ctx.fillStyle = '#5a5a60';
-    for (const l of this.lamps) {
-      if (l.x < x0 || l.x > x1 || l.y < y0 || l.y > y1) continue;
-      ctx.fillRect(l.x - 2, l.y - 2, 4, 4);
-      ctx.fillStyle = '#ffe9a0';
-      ctx.fillRect(l.x - 1, l.y - 1, 2, 2);
-      ctx.fillStyle = '#5a5a60';
+function drawMarina(ctx, city, vx, vy) {
+  for (const d of city.docks) {
+    ctx.fillStyle = '#9a7448';
+    if (d.vertical) {
+      ctx.fillRect(d.x - vx - d.w / 2, d.y - vy, d.w, d.len);
+    } else {
+      ctx.fillRect(d.x - vx, d.y - vy - d.w / 2, d.len, d.w);
     }
-
-    // World border.
-    ctx.strokeStyle = '#7a4a3a';
-    ctx.lineWidth = 10;
-    ctx.strokeRect(5, 5, WORLD - 10, WORLD - 10);
+  }
+  for (const b of city.boats) {
+    const sx = b.x - vx;
+    const sy = b.y - vy;
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(b.angle);
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.moveTo(b.len / 2, 0);
+    ctx.lineTo(b.len / 4, -9);
+    ctx.lineTo(-b.len / 2, -8);
+    ctx.lineTo(-b.len / 2, 8);
+    ctx.lineTo(b.len / 4, 9);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7a4a2b';
+    ctx.fillRect(-4, -2, 10, 4);
+    ctx.restore();
   }
 }

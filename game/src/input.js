@@ -1,77 +1,75 @@
-// input.js — keyboard and mouse state for the game.
-// Tracks held keys, one-shot presses (consumed by the game each frame),
-// mouse position in canvas coordinates and mouse button state.
+// input.js — keyboard + mouse state. The rest of the game reads this
+// object; nothing else touches DOM events.
 
-export class Input {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.keys = new Set();
-    this.pressed = new Set();
-    this.mouse = { x: 0, y: 0, down: false, clicked: false };
-    this._onKeyDown = (e) => {
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
-        e.preventDefault();
-      }
-      if (!e.repeat) this.pressed.add(e.code);
-      this.keys.add(e.code);
-    };
-    this._onKeyUp = (e) => {
-      this.keys.delete(e.code);
-    };
-    this._onMouseMove = (e) => {
-      const r = canvas.getBoundingClientRect();
-      const sx = canvas.width / r.width;
-      const sy = canvas.height / r.height;
-      this.mouse.x = (e.clientX - r.left) * sx;
-      this.mouse.y = (e.clientY - r.top) * sy;
-    };
-    this._onMouseDown = (e) => {
-      if (e.button === 0) {
-        this.mouse.down = true;
-        this.mouse.clicked = true;
-      }
-    };
-    this._onMouseUp = (e) => {
-      if (e.button === 0) this.mouse.down = false;
-    };
-    this._onBlur = () => {
-      this.keys.clear();
-      this.mouse.down = false;
-    };
-    window.addEventListener('keydown', this._onKeyDown);
-    window.addEventListener('keyup', this._onKeyUp);
-    window.addEventListener('blur', this._onBlur);
-    canvas.addEventListener('mousemove', this._onMouseMove);
-    canvas.addEventListener('mousedown', this._onMouseDown);
-    window.addEventListener('mouseup', this._onMouseUp);
-  }
+export const input = {
+  keys: new Set(),
+  mouseX: 0,
+  mouseY: 0,
+  mouseDown: false,
+  pressed: new Set(), // keys that went down this frame (edge-triggered)
+};
 
-  down(...codes) {
-    return codes.some((c) => this.keys.has(c));
-  }
+let attached = false;
 
-  wasPressed(code) {
-    return this.pressed.has(code);
-  }
+export function attachInput(canvas) {
+  if (attached) return;
+  attached = true;
 
-  // Called at the end of each frame: clears one-shot state.
-  endFrame() {
-    this.pressed.clear();
-    this.mouse.clicked = false;
-  }
-
-  moveAxis() {
-    let x = 0;
-    let y = 0;
-    if (this.down('KeyA', 'ArrowLeft')) x -= 1;
-    if (this.down('KeyD', 'ArrowRight')) x += 1;
-    if (this.down('KeyW', 'ArrowUp')) y -= 1;
-    if (this.down('KeyS', 'ArrowDown')) y += 1;
-    if (x !== 0 && y !== 0) {
-      const inv = Math.SQRT1_2;
-      x *= inv;
-      y *= inv;
+  window.addEventListener('keydown', (e) => {
+    if (!input.keys.has(e.code)) input.pressed.add(e.code);
+    input.keys.add(e.code);
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+      e.preventDefault();
     }
-    return { x, y };
+  });
+  window.addEventListener('keyup', (e) => {
+    input.keys.delete(e.code);
+  });
+  window.addEventListener('blur', () => {
+    input.keys.clear();
+    input.mouseDown = false;
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const sx = canvas.width / rect.width;
+    const sy = canvas.height / rect.height;
+    input.mouseX = (e.clientX - rect.left) * sx;
+    input.mouseY = (e.clientY - rect.top) * sy;
+  });
+  canvas.addEventListener('mousedown', (e) => {
+    if (e.button === 0) input.mouseDown = true;
+  });
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) input.mouseDown = false;
+  });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+export function down(code) {
+  return input.keys.has(code);
+}
+
+export function justPressed(code) {
+  return input.pressed.has(code);
+}
+
+export function endFrame() {
+  input.pressed.clear();
+}
+
+// Movement vector from WASD / arrows, normalised.
+export function moveVector() {
+  let x = 0;
+  let y = 0;
+  if (down('KeyA') || down('ArrowLeft')) x -= 1;
+  if (down('KeyD') || down('ArrowRight')) x += 1;
+  if (down('KeyW') || down('ArrowUp')) y -= 1;
+  if (down('KeyS') || down('ArrowDown')) y += 1;
+  if (x !== 0 && y !== 0) {
+    const inv = Math.SQRT1_2;
+    x *= inv;
+    y *= inv;
   }
+  return { x, y };
 }

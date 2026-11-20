@@ -1,239 +1,177 @@
-// hud.js — heads-up display and full-screen states drawn on the canvas:
-// health, cash, wanted stars, chaos, mission objective, phone messages,
-// banners, and the title / pause / WASTED / BUSTED screens.
+// hud.js — all screen-space drawing: cash/rep, health, wanted stars,
+// mission banner + prompt, title / pause / busted / wasted overlays,
+// and the cover tableau used by the screenshot mode.
 
-import { clamp } from './rng.js';
+import { drawMinimap } from './minimap.js';
 
-function panel(ctx, x, y, w, h, alpha = 0.55) {
-  ctx.fillStyle = `rgba(12,16,24,${alpha})`;
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 10);
-  ctx.fill();
-}
+export function drawHUD(ctx, world) {
+  const { w, h } = { w: ctx.canvas.width, h: ctx.canvas.height };
+  const save = world.save;
 
-export function drawHUD(ctx, world, vw, vh) {
-  const { player, wanted } = world;
-  ctx.save();
-  ctx.textBaseline = 'alphabetic';
+  if (world.state === 'title') {
+    drawTitle(ctx, world, w, h);
+    return;
+  }
 
-  // Health bar (bottom-left, above the minimap zone).
-  const hx = 18;
-  const hy = vh - 44;
-  panel(ctx, hx - 6, hy - 24, 236, 56, 0.5);
-  ctx.fillStyle = '#f2f2f2';
-  ctx.font = 'bold 12px system-ui, sans-serif';
-  ctx.fillText('HEALTH', hx, hy - 8);
-  ctx.fillStyle = '#3a3f47';
-  ctx.fillRect(hx + 62, hy - 17, 160, 11);
-  const hpRatio = clamp(player.health / player.maxHealth, 0, 1);
-  ctx.fillStyle = hpRatio > 0.3 ? '#57d977' : '#e84a4a';
-  ctx.fillRect(hx + 62, hy - 17, 160 * hpRatio, 11);
-  ctx.fillStyle = '#f2f2f2';
-  ctx.font = 'bold 13px system-ui, sans-serif';
-  ctx.fillText(`$${world.cash}`, hx, hy + 16);
+  // Top-left: money + reputation.
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 24px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(14, 12, 240, 66);
+  ctx.fillStyle = '#7dff6a';
+  ctx.fillText(`$${save.cash}`, 26, 42);
   ctx.fillStyle = '#ffd94d';
-  ctx.fillText(`CHAOS ${Math.floor(world.chaos)}`, hx + 90, hy + 16);
+  ctx.font = 'bold 15px system-ui, sans-serif';
+  ctx.fillText(`REP ${save.rep}   JOBS ${save.missionsDone}`, 26, 66);
 
-  // Wanted stars (top-right).
-  const stars = wanted.stars;
-  if (stars > 0 || wanted.heat > 0) {
-    panel(ctx, vw - 208, 14, 190, 46, 0.5);
-    ctx.font = '26px system-ui, sans-serif';
-    ctx.textAlign = 'right';
-    for (let i = 0; i < 5; i++) {
-      const sx = vw - 30 - i * 32;
-      ctx.fillStyle = i < stars ? '#ffd94d' : 'rgba(255,255,255,0.25)';
-      ctx.fillText('★', sx, 48);
+  // Top-right: wanted stars.
+  const stars = world.police.stars;
+  ctx.textAlign = 'right';
+  ctx.font = 'bold 30px system-ui, sans-serif';
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < stars ? '#ffd94d' : 'rgba(255,255,255,0.25)';
+    ctx.fillText('★', w - 26 - (4 - i) * 34, 44);
+  }
+  if (world.police.bust > 0.05) {
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(w - 190, 56, 164, 12);
+    ctx.fillStyle = '#ff5252';
+    ctx.fillRect(w - 188, 58, 160 * Math.min(1, world.police.bust), 8);
+    ctx.font = 'bold 12px system-ui, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('BUSTED?', w - 26, 84);
+  }
+
+  // Bottom-left: health bar (+ car health while driving).
+  const hp = Math.max(0, world.player.health);
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.fillRect(16, h - 44, 224, 20);
+  ctx.fillStyle = hp > 30 ? '#58d158' : '#e74c3c';
+  ctx.fillRect(18, h - 42, 220 * (hp / 100), 16);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('HEALTH', 22, h - 30);
+  if (world.player.inCar) {
+    const ch = Math.max(0, world.player.inCar.health);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(16, h - 70, 224, 14);
+    ctx.fillStyle = '#f39c12';
+    ctx.fillRect(18, h - 68, 220 * (ch / 100), 10);
+  }
+
+  // Mission banner.
+  const missions = world.missions;
+  if (missions.bannerTime > 0) {
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 21px system-ui, sans-serif';
+    const tw = ctx.measureText(missions.banner).width + 44;
+    ctx.fillStyle = 'rgba(10,14,28,0.72)';
+    ctx.fillRect(w / 2 - tw / 2, 92, tw, 40);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(missions.banner, w / 2, 119);
+  }
+
+  // Objective line + Bay Run clock.
+  const obj = missions.objective();
+  if (obj) {
+    ctx.textAlign = 'center';
+    ctx.font = '15px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    let line = `Objective: ${obj.label}`;
+    if (missions.active && missions.active.kind === 'bayrun') {
+      line += `   ⏱ ${Math.max(0, missions.active.timeLeft).toFixed(0)}s`;
     }
-    ctx.textAlign = 'left';
+    ctx.fillText(line, w / 2, h - 16);
   }
-
-  // Busted meter.
-  if (wanted.busted > 0.02) {
-    const bw = 260;
-    const bx = vw / 2 - bw / 2;
-    panel(ctx, bx - 10, 66, bw + 20, 40, 0.6);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 13px system-ui, sans-serif';
+  if (missions.hint) {
     ctx.textAlign = 'center';
-    ctx.fillText('BUSTED?', vw / 2, 84);
-    ctx.fillStyle = '#3a3f47';
-    ctx.fillRect(bx, 90, bw, 8);
-    ctx.fillStyle = '#4a90ff';
-    ctx.fillRect(bx, 90, bw * wanted.busted, 8);
-    ctx.textAlign = 'left';
-  }
-
-  // Mission objective (top-centre).
-  const objective = world.missions.objectiveText();
-  if (objective) {
-    ctx.font = 'bold 15px system-ui, sans-serif';
-    const w = ctx.measureText(objective).width + 28;
-    panel(ctx, vw / 2 - w / 2, 14, w, 34, 0.55);
-    ctx.fillStyle = '#ffe14d';
-    ctx.textAlign = 'center';
-    ctx.fillText(objective, vw / 2, 37);
-    ctx.textAlign = 'left';
-  }
-
-  // Car name + damage while driving.
-  if (player.inCar) {
-    const car = player.inCar;
-    ctx.font = 'bold 14px system-ui, sans-serif';
-    const label = `${car.spec.name}  ${Math.round(car.speed() * 0.14)} km/h`;
-    const w = ctx.measureText(label).width + 24;
-    panel(ctx, vw - w - 18, vh - 96, w, 52, 0.5);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, vw - w - 6, vh - 72);
-    ctx.fillStyle = '#3a3f47';
-    ctx.fillRect(vw - w - 6, vh - 62, w - 24, 7);
-    ctx.fillStyle = car.health > 30 ? '#57d977' : '#e84a4a';
-    ctx.fillRect(vw - w - 6, vh - 62, (w - 24) * (car.health / 100), 7);
+    ctx.font = 'italic 15px system-ui, sans-serif';
+    ctx.fillStyle = '#ffd94d';
+    ctx.fillText(missions.hint, w / 2, h - 40);
+    missions.hint = null;
   }
 
   // Context prompt.
-  if (world.prompt) {
-    ctx.font = 'bold 15px system-ui, sans-serif';
-    const w = ctx.measureText(world.prompt).width + 30;
-    panel(ctx, vw / 2 - w / 2, vh - 108, w, 34, 0.65);
-    ctx.fillStyle = '#fff';
+  const prompt = contextPrompt(world);
+  if (prompt) {
     ctx.textAlign = 'center';
-    ctx.fillText(world.prompt, vw / 2, vh - 85);
-    ctx.textAlign = 'left';
+    ctx.font = 'bold 17px system-ui, sans-serif';
+    ctx.fillStyle = 'rgba(10,14,28,0.66)';
+    const tw = ctx.measureText(prompt).width + 36;
+    ctx.fillRect(w / 2 - tw / 2, h - 118, tw, 34);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(prompt, w / 2, h - 95);
   }
 
-  drawPhone(ctx, world, vw, vh);
-  drawBanner(ctx, world, vw, vh);
-  ctx.restore();
+  drawMinimap(ctx, world);
+
+  if (world.state === 'paused') overlay(ctx, w, h, 'PAUSED', 'Press P to resume');
+  if (world.state === 'busted') overlay(ctx, w, h, 'BUSTED', 'The Coral Marina PD got you. Press Enter.');
+  if (world.state === 'wasted') overlay(ctx, w, h, 'WASTED', 'You wake up at the marina clinic. Press Enter.');
 }
 
-function drawPhone(ctx, world, vw, vh) {
-  const msgs = world.missions.messageQueue;
-  if (!msgs.length) return;
-  const m = msgs[msgs.length - 1];
-  const w = 292;
-  const h = 86;
-  const x = vw - w - 18;
-  const y = vh - h - 150;
-  ctx.save();
-  ctx.fillStyle = 'rgba(10,12,18,0.88)';
-  ctx.beginPath();
-  ctx.roundRect(x, y, w, h, 14);
-  ctx.fill();
-  ctx.strokeStyle = '#3a4152';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = '#57d977';
-  ctx.beginPath();
-  ctx.arc(x + 20, y + 20, 9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 13px system-ui, sans-serif';
-  ctx.fillText(m.from, x + 36, y + 25);
-  ctx.font = '12.5px system-ui, sans-serif';
-  ctx.fillStyle = '#d7dde8';
-  wrapText(ctx, m.text, x + 14, y + 46, w - 28, 15, 2);
-  ctx.restore();
-}
-
-function wrapText(ctx, text, x, y, maxW, lineH, maxLines) {
-  const words = text.split(' ');
-  let line = '';
-  let lines = 0;
-  for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
-    if (ctx.measureText(test).width > maxW && line) {
-      ctx.fillText(line, x, y + lines * lineH);
-      lines++;
-      if (lines >= maxLines) return;
-      line = word;
-    } else {
-      line = test;
-    }
+function contextPrompt(world) {
+  const p = world.player;
+  if (world.state !== 'playing') return null;
+  if (p.inCar) return 'E — exit car';
+  const mPrompt = world.missions.promptText();
+  if (mPrompt) return mPrompt;
+  // Near a car?
+  for (const car of world.allCars()) {
+    const d = Math.hypot(car.x - p.x, car.y - p.y);
+    if (d < 44) return car.driver === null ? 'E — steal car' : 'E — take car';
   }
-  if (line && lines < maxLines) ctx.fillText(line, x, y + lines * lineH);
+  return null;
 }
 
-function drawBanner(ctx, world, vw, vh) {
-  const b = world.missions.banner;
-  if (!b) return;
-  const a = clamp(b.t, 0, 1);
-  ctx.save();
-  ctx.globalAlpha = a;
-  ctx.fillStyle = 'rgba(10,12,18,0.72)';
-  ctx.fillRect(0, vh * 0.3, vw, 110);
+function overlay(ctx, w, h, title, sub) {
+  ctx.fillStyle = 'rgba(5,8,18,0.55)';
+  ctx.fillRect(0, 0, w, h);
   ctx.textAlign = 'center';
-  ctx.fillStyle = b.kind === 'win' ? '#57d977' : '#e84a4a';
-  ctx.font = 'bold 42px system-ui, sans-serif';
-  ctx.fillText(b.text, vw / 2, vh * 0.3 + 52);
-  ctx.fillStyle = '#fff';
-  ctx.font = '17px system-ui, sans-serif';
-  ctx.fillText(b.sub, vw / 2, vh * 0.3 + 84);
-  ctx.restore();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 64px system-ui, sans-serif';
+  ctx.fillText(title, w / 2, h / 2 - 10);
+  ctx.font = '20px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText(sub, w / 2, h / 2 + 34);
 }
 
-export function drawTitle(ctx, world, vw, vh) {
-  ctx.save();
-  const grad = ctx.createLinearGradient(0, 0, 0, vh);
-  grad.addColorStop(0, 'rgba(16,24,48,0.55)');
-  grad.addColorStop(1, 'rgba(60,16,32,0.65)');
+export function drawTitle(ctx, world, w, h) {
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(20,10,40,0.25)');
+  grad.addColorStop(1, 'rgba(10,10,30,0.78)');
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, vw, vh);
+  ctx.fillRect(0, 0, w, h);
   ctx.textAlign = 'center';
+  ctx.fillStyle = '#ff5e78';
+  ctx.font = 'bold 96px system-ui, sans-serif';
+  ctx.fillText('MARINA HEAT', w / 2, 240);
   ctx.fillStyle = '#ffd94d';
-  ctx.font = 'bold 84px system-ui, sans-serif';
-  ctx.fillText('MARINA HEAT', vw / 2, vh * 0.3);
-  ctx.fillStyle = '#fff';
-  ctx.font = '21px system-ui, sans-serif';
-  ctx.fillText('An open-world crime spree in Coral Marina', vw / 2, vh * 0.3 + 40);
-  panel(ctx, vw / 2 - 250, vh * 0.46, 500, 168, 0.62);
-  ctx.font = '16px system-ui, sans-serif';
-  ctx.fillStyle = '#d7dde8';
-  const lines = [
-    'WASD / Arrows — move & drive      Shift — sprint',
-    'Mouse — aim      Click / hold — shoot',
-    'E — steal / exit car      Space — handbrake',
-    'F — accept mission      P — pause      M — mute',
-  ];
-  lines.forEach((line, i) => ctx.fillText(line, vw / 2, vh * 0.46 + 36 + i * 26));
-  ctx.fillStyle = '#57d977';
+  ctx.font = 'bold 26px system-ui, sans-serif';
+  ctx.fillText('CORAL MARINA · EST. 1986', w / 2, 286);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '20px system-ui, sans-serif';
+  ctx.fillText('Steal cars. Run jobs for Marisol Vega. Outrun the law.', w / 2, 348);
   ctx.font = 'bold 24px system-ui, sans-serif';
-  if (world.save && !world.save.fresh && (world.save.missionsDone.length > 0 || world.save.cash !== 250)) {
-    ctx.fillText('Press ENTER to continue', vw / 2, vh * 0.46 + 210);
-    ctx.fillStyle = '#fff';
-    ctx.font = '15px system-ui, sans-serif';
-    ctx.fillText(`Saved cash $${world.save.cash} · missions done ${world.save.missionsDone.length}/3 · N for new game`, vw / 2, vh * 0.46 + 238);
-  } else {
-    ctx.fillText('Press ENTER to start', vw / 2, vh * 0.46 + 210);
+  ctx.fillText('Press ENTER to play', w / 2, 430);
+  ctx.font = '16px system-ui, sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillText('WASD move · Mouse aim · Hold mouse to shoot · E enter/exit car · Shift sprint · P pause · M mute', w / 2, 470);
+  if (world.save.missionsDone > 0) {
+    ctx.fillText(`Welcome back — $${world.save.cash}, REP ${world.save.rep}, ${world.save.missionsDone} jobs done`, w / 2, 510);
   }
-  ctx.restore();
 }
 
-export function drawPause(ctx, vw, vh) {
-  ctx.save();
-  ctx.fillStyle = 'rgba(8,10,16,0.66)';
-  ctx.fillRect(0, 0, vw, vh);
+// The staged cover tableau title (screenshot mode only).
+export function drawCoverTitle(ctx, w, h) {
   ctx.textAlign = 'center';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 48px system-ui, sans-serif';
-  ctx.fillText('PAUSED', vw / 2, vh * 0.42);
-  ctx.font = '18px system-ui, sans-serif';
-  ctx.fillStyle = '#d7dde8';
-  ctx.fillText('P or Esc to resume · M to toggle sound', vw / 2, vh * 0.42 + 38);
-  ctx.restore();
-}
-
-export function drawEndScreen(ctx, kind, world, vw, vh) {
-  ctx.save();
-  ctx.fillStyle = kind === 'wasted' ? 'rgba(60,4,4,0.68)' : 'rgba(4,16,60,0.68)';
-  ctx.fillRect(0, 0, vw, vh);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = kind === 'wasted' ? '#e84a4a' : '#6ab4ff';
-  ctx.font = 'bold 84px system-ui, sans-serif';
-  ctx.fillText(kind === 'wasted' ? 'WASTED' : 'BUSTED', vw / 2, vh * 0.42);
-  ctx.fillStyle = '#fff';
-  ctx.font = '19px system-ui, sans-serif';
-  ctx.fillText(`Cash kept: $${world.cash} · Chaos caused: ${Math.floor(world.chaos)}`, vw / 2, vh * 0.42 + 44);
-  ctx.fillText('Press ENTER to play again', vw / 2, vh * 0.42 + 78);
-  ctx.restore();
+  ctx.fillStyle = 'rgba(10,6,24,0.35)';
+  ctx.fillRect(0, 0, w, 170);
+  ctx.fillStyle = '#ff5e78';
+  ctx.font = 'bold 92px system-ui, sans-serif';
+  ctx.fillText('MARINA HEAT', w / 2, 105);
+  ctx.fillStyle = '#ffd94d';
+  ctx.font = 'bold 24px system-ui, sans-serif';
+  ctx.fillText('C O R A L   M A R I N A', w / 2, 145);
 }

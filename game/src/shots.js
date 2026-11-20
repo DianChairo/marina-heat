@@ -1,68 +1,89 @@
-// shots.js — deterministic screenshot scenes. With ?shot=<name>&seed=<n>
-// the game builds the world from that seed, poses a frozen scene, renders
-// it once and sets window.__shotReady = true. Same seed -> same scene.
+// shots.js — deterministic screenshot modes. With ?shot=<name>&seed=7
+// the game builds the seeded city, poses one scene, steps the world a
+// fixed number of ticks (no wall-clock input), renders, and sets
+// window.__shotReady = true so an external driver can capture the
+// canvas. Scenes: cover | drive | chase | mission.
 
-import { Car, CAR_SPECS, POLICE_SPEC } from './vehicles.js';
-import { PoliceCar } from './police.js';
-import { MISSION_DEFS } from './missions.js';
+import { WATER_X } from './city.js';
+import { makeCar } from './vehicles.js';
 
-export function parseShot() {
-  const params = new URLSearchParams(window.location.search);
-  const name = params.get('shot');
-  if (!name) return null;
-  const seedParam = params.get('seed');
-  const seed = seedParam === null ? 7 : Number(seedParam) || 7;
-  return { name, seed };
+export function parseShotParams() {
+  const q = new URLSearchParams(window.location.search);
+  const shot = q.get('shot');
+  if (!shot) return null;
+  const seed = Number.parseInt(q.get('seed') || '7', 10) || 7;
+  return { shot, seed };
 }
 
-export function applyShot(world, name) {
-  const player = world.player;
-  world.state = 'playing';
-  if (name === 'cover') {
-    // On foot at a busy intersection, traffic and peds around, HUD live.
-    player.x = 428;
-    player.y = 452;
-    player.angle = -0.6;
-    world.missions.phone(world, 'Marisol Vega', 'Welcome to Coral Marina. Press F when you want work.');
-  } else if (name === 'drive') {
-    // Behind the wheel of a coral coupe on a main street.
-    const car = new Car(CAR_SPECS[0], 800, 374, 0, 'player');
-    car.driver = 'player';
-    car.vx = 210;
-    world.cars.push(car);
-    player.inCar = car;
-    player.x = car.x;
-    player.y = car.y;
-  } else if (name === 'chase') {
-    // Three stars, cruisers closing in on the player's car.
-    const car = new Car(CAR_SPECS[4], 1200, 1174, 0, 'player');
-    car.driver = 'player';
-    car.vx = 180;
-    car.damage(22);
-    world.cars.push(car);
-    player.inCar = car;
-    player.x = car.x;
-    player.y = car.y;
-    world.wanted.heat = 285;
-    const spots = [
-      { x: 1060, y: 1090, a: 0.5 }, { x: 1330, y: 1250, a: -2.6 }, { x: 1010, y: 1300, a: -0.4 },
-    ];
-    for (const s of spots) {
-      const copCar = new Car(POLICE_SPEC, s.x, s.y, s.a, 'police');
-      copCar.driver = 'ai';
-      world.police.push(new PoliceCar(copCar));
-      world.cars.push(copCar);
-    }
-    world.missions.phone(world, 'Marisol Vega', 'CPD is all over you — lose them!');
-  } else if (name === 'mission') {
-    // Bay Run active, first checkpoint ring visible ahead of the player.
-    player.x = 400;
-    player.y = 520;
-    player.angle = -Math.PI / 2;
-    world.missions.begin(world, MISSION_DEFS[0]);
-    world.missions.messageQueue.length = 0;
-    world.missions.phone(world, 'Marisol Vega', 'Bay Run: checkpoints are lit on your map. Move!');
+// Pose the world for the requested scene. Called once, before the
+// fixed-step warm-up in main.js.
+export function stageScene(world, shot) {
+  const p = world.player;
+  const city = world.city;
+
+  if (shot === 'cover') {
+    // Hero tableau on the promenade: hero car angled toward camera,
+    // player beside it, Marisol and the marina behind.
+    const car = makeCar(WATER_X - 190, 700, -0.5, '#e74c3c', 'civilian');
+    car.driver = null;
+    world.parked.push(car);
+    p.x = WATER_X - 150;
+    p.y = 660;
+    p.angle = -2.2;
+    world.aimAngle = -2.2;
+    world.cameraSnap();
+    return;
   }
-  // Freeze ambient motion so the render is stable.
-  world.frozen = true;
+
+  if (shot === 'drive') {
+    // Player driving east along the horizontal street at y=1024.
+    const car = makeCar(900, 1024 + 19, 0, '#3498db', 'civilian');
+    car.driver = 'player';
+    car.speed = 215;
+    world.traffic.push(car);
+    p.inCar = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = 0;
+    world.cameraSnap();
+    return;
+  }
+
+  if (shot === 'chase') {
+    // Three-star chase: player car fleeing west, cruisers behind.
+    const car = makeCar(1500, 1280 + 19, 0, '#f1c40f', 'civilian');
+    car.driver = 'player';
+    car.speed = 260;
+    world.traffic.push(car);
+    p.inCar = car;
+    p.x = car.x;
+    p.y = car.y;
+    p.angle = 0;
+    world.police.heat = 3;
+    const c1 = makeCar(1330, 1252, 0.15, '#ffffff', 'police');
+    c1.driver = 'police';
+    c1.speed = 240;
+    const c2 = makeCar(1300, 1310, -0.1, '#ffffff', 'police');
+    c2.driver = 'police';
+    c2.speed = 225;
+    world.police.cruisers.push(c1, c2);
+    world.cameraSnap();
+    return;
+  }
+
+  if (shot === 'mission') {
+    // At Marisol's corner with a Bay Run about to start: player on
+    // foot next to her, briefing banner up.
+    p.x = city.marisol.x - 34;
+    p.y = city.marisol.y + 8;
+    p.angle = 0.4;
+    world.aimAngle = 0.4;
+    world.missions.showBanner('BAY RUN — hit every checkpoint before the clock dies!');
+    world.missions.bannerTime = 999;
+    world.cameraSnap();
+    return;
+  }
+
+  // Unknown scene name: fall back to the cover tableau.
+  stageScene(world, 'cover');
 }

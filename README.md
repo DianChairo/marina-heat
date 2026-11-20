@@ -1,95 +1,100 @@
 # Marina Heat
 
-An original open-world crime game set in **Coral Marina**, a sun-soaked
-3200×3200 coastal city generated procedurally from a seed: a grid of
-streets and city blocks, palm trees, and a marina with docks and water
-along the east and south edges. Built with vanilla JavaScript and
-Canvas 2D — no dependencies, no build step, runs fully offline from
-static files.
-
-Steal cars, outrun the Coral Marina PD, and run jobs for fixer
-**Marisol Vega**.
-
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/DianChairo/marina-heat/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/DianChairo/marina-heat/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-Referral: https://make.fun/r/8tpwxchz
+**Marina Heat** is a top-down 2D open-world crime game set in Coral Marina, a
+sun-drenched coastal city of palm-lined streets, neon storefronts and a working
+marina. Steal cars, run jobs for fixer Marisol Vega, outrun the Coral Marina PD
+wanted-level chase system, and build your reputation — all in vanilla
+JavaScript on a single Canvas 2D surface. No dependencies, no build step, fully
+offline.
+
+The city is procedurally generated from a seed (default 7): a 3200×3200 world
+with a street grid, city blocks with varied buildings, palm trees, sidewalks,
+and water with docks and moored boats along the east and south edges.
 
 ## Screenshots
 
 | Cover | Driving |
 | --- | --- |
-| ![On foot in Coral Marina](screenshots/1-cover.jpg) | ![Driving a stolen coupe](screenshots/2-drive.jpg) |
+| ![Cover](screenshots/1-cover.jpg) | ![Driving](screenshots/2-drive.jpg) |
 
 | Police chase | Mission |
 | --- | --- |
-| ![Three-star police chase](screenshots/3-chase.jpg) | ![Bay Run checkpoint mission](screenshots/4-mission.jpg) |
+| ![Chase](screenshots/3-chase.jpg) | ![Mission](screenshots/4-mission.jpg) |
+
+## How to run
+
+- **Just play:** open `game/index.html` in any modern browser. Everything is
+  static and offline; there is nothing to install.
+- **Local server:** `node serve.ts` (from the repo root) serves the game at
+  http://127.0.0.1:8917/ — handy because some browsers restrict ES modules on
+  `file://` URLs.
+- **Programmatic harness:** `node main.ts` copies the game and screenshots
+  into `$MAKEFUN_OUTPUT_DIR` (or `./output`) together with a `dossier.json`
+  describing the entry.
 
 ## Controls
 
 | Input | Action |
 | --- | --- |
-| WASD / Arrow keys | Move on foot / drive |
-| Shift | Sprint |
+| Enter | Start game / confirm |
+| W A S D / Arrow keys | Move on foot, drive |
 | Mouse | Aim |
-| Mouse click / hold | Shoot (hitscan pistol) |
-| E | Steal / enter car, exit car |
-| Space | Handbrake (drift) |
-| F | Accept a mission offer |
-| P / Esc | Pause |
-| M | Mute / unmute sound |
-| Enter | Start / continue / restart |
+| Mouse button (hold) | Shoot |
+| E | Enter / exit the nearest car |
+| Shift | Sprint on foot / handbrake boost feel in a car |
+| P | Pause / resume |
+| M | Toggle sound |
 
-## Systems
+## Gameplay
 
-- **Open world** — seeded procedural city: street grid, blocks,
-  buildings with collision, palms, lamps, plazas, beach and marina
-  docks.
-- **On foot** — WASD movement with sprint and mouse aim.
-- **Combat** — hitscan shooting with muzzle flash, tracers and hit
-  sparks; damage to cars and pedestrians feeds a chaos score.
-- **Vehicles** — steal any parked or traffic car; arcade driving with
-  drift on the handbrake; damage states from dented to smoking,
-  burning and wrecked, with smoke/fire particles.
-- **Traffic AI** — lane-following cars that stop for obstacles, swerve
-  around pedestrians, honk, and respawn near the player.
-- **Pedestrians** — wander the sidewalks and flee gunfire, explosions
-  and fast cars.
-- **Wanted system** — crimes raise heat across 1–5 stars; heat decays
-  while out of police sight; a BUSTED meter fills when officers are
-  close and you are slow or on foot.
-- **Police** — cruisers spawn in response to your stars, chase and ram,
-  with flashing light bars and sirens.
-- **Missions** — three jobs from Marisol Vega with phone-style message
-  popups: *Bay Run* (timed checkpoint run), *Special Delivery* (drive a
-  package car to the drop-off while wanted) and *Rampage* (score 1500
-  chaos points against the clock).
-- **HUD & minimap** — health, cash, wanted stars, chaos, car status,
-  mission objective, phone messages, and a live corner minimap with
-  player, car, police and mission markers.
-- **Sound** — WebAudio-synthesized gunshots, impacts, engine, sirens,
-  pickups and jingles. No audio files.
-- **Save** — cash and mission progress persist in `localStorage`;
-  Continue from the title screen.
-- **Screens** — title, pause, WASTED (health reaches zero) and BUSTED
-  (meter fills), plus mission complete/fail banners.
-- **Deterministic screenshots** — `game/index.html?shot=<cover|drive|chase|mission>&seed=<n>`
-  poses a frozen scene and sets `window.__shotReady` when rendered.
+- **Open world:** pedestrians stroll the sidewalks, traffic flows along the
+  street grid and stops at junctions; every parked or moving car can be
+  stolen.
+- **Wanted system:** crimes (car theft, assault, shots fired, collisions)
+  raise your wanted level from 1 to 5 stars. Police cruisers spawn, pursue,
+  ram and shoot; break line of sight and stay clean to cool down.
+- **Combat:** aim with the mouse, hold to fire. Health, armor of the moment,
+  and a busted/wasted flow when the law or your wounds catch up with you.
+- **Missions:** fixer **Marisol Vega** (marked on the minimap) offers jobs —
+  deliveries, pickups, and the timed **Bay Run** checkpoint race around the
+  marina. Completing missions pays cash and raises your reputation.
+- **HUD & minimap:** cash, reputation, health, wanted stars, mission text and
+  a live minimap with player, police, traffic and objective markers.
+- **Audio:** a small WebAudio synth provides engine hum, sirens, gunshots,
+  pickups and UI blips — no audio files needed.
+- **Save:** cash, reputation, completed missions and settings persist in
+  `localStorage`.
 
-## Run it
+## Deterministic screenshots
 
-```sh
-node serve.ts            # serves game/ on http://localhost:8080
+The game supports staged screenshot modes for reproducible captures:
+
+`game/index.html?shot=cover|drive|chase|mission&seed=7`
+
+Each mode builds the seeded city, poses a scene (cover tableau, driving,
+police chase, mission briefing), renders one frame, and sets
+`window.__shotReady = true` when the frame is ready to capture. See
+`shots.json` for the capture list (1280×800).
+
+## Layout
+
+```
+game/index.html        entry page (canvas #game)
+game/style.css         page styling
+game/src/*.js          engine modules: rng, city, input, storage, audio,
+                       vehicles, traffic, pedestrians, player, police,
+                       combat, missions, hud, minimap, shots, main
+main.ts                make.fun harness (copies entry + dossier to output)
+serve.ts               tiny static server for local play
+shots.json             screenshot capture manifest
+screenshots/           the four staged captures
 ```
 
-Or serve the `game/` directory with any static file server and open
-`index.html`. To hand the entry in (copies `game/` + `screenshots/` and
-writes `dossier.json`):
-
-```sh
-MAKEFUN_OUTPUT_DIR=out node main.ts
-```
+Referral: https://make.fun/r/8tpwxchz
 
 ## License
 

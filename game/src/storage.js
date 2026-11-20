@@ -1,39 +1,39 @@
-// storage.js — localStorage save wrapper. All access is guarded so the
-// game still runs where storage is unavailable (private mode, file://).
+// storage.js — localStorage save game: cash, reputation, completed
+// missions and the mute setting survive between visits.
 
-const KEY = 'marina-heat-save-v6';
+const KEY = 'marina-heat-save-v1';
 
-const DEFAULTS = {
+export const DEFAULT_SAVE = {
   cash: 250,
-  missionsDone: [],
-  totalChaos: 0,
-  timesWasted: 0,
-  timesBusted: 0,
+  rep: 0,
+  missionsDone: 0,
+  bestBayRun: null,
+  muted: false,
 };
 
 export function loadSave() {
   try {
-    const raw = window.localStorage.getItem(KEY);
-    if (!raw) return { ...DEFAULTS, fresh: true };
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return { ...DEFAULT_SAVE };
     const parsed = JSON.parse(raw);
-    return { ...DEFAULTS, ...parsed, fresh: false };
+    return { ...DEFAULT_SAVE, ...parsed };
   } catch {
-    return { ...DEFAULTS, fresh: true };
+    return { ...DEFAULT_SAVE };
   }
 }
 
 export function storeSave(save) {
   try {
-    const { fresh, ...rest } = save;
-    window.localStorage.setItem(KEY, JSON.stringify(rest));
+    localStorage.setItem(KEY, JSON.stringify(save));
   } catch {
-    // Storage full or blocked: the game continues without persisting.
+    // Storage may be unavailable (private mode); the game simply
+    // continues without persistence.
   }
 }
 
 export function clearSave() {
   try {
-    window.localStorage.removeItem(KEY);
+    localStorage.removeItem(KEY);
   } catch {
     // Nothing to clear.
   }

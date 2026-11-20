@@ -1,248 +1,214 @@
-// missions.js — three missions from fixer Marisol Vega, delivered by
-// phone messages. A small state machine: idle -> active -> done/failed,
-// with checkpoints, timers and cash rewards. Progress persists via the
-// save object (missionsDone list).
+// missions.js — work for fixer Marisol Vega, who waits by the marina
+// promenade. Walk into her marker to take a job: package deliveries,
+// pickups, and the timed Bay Run checkpoint race around the bay.
+// Finishing a job pays cash and reputation and saves the game.
 
 import { dist } from './rng.js';
-import { Car, CAR_SPECS } from './vehicles.js';
+import { BLOCK, WATER_X, WATER_Y } from './city.js';
 
-export const CONTACT = 'Marisol Vega';
+const JOB_KINDS = ['delivery', 'pickup', 'bayrun'];
 
-export const MISSION_DEFS = [
-  {
-    id: 'bay-run',
-    title: 'Bay Run',
-    blurb: 'Hit every checkpoint along the marina before the clock dies.',
-    reward: 600,
-  },
-  {
-    id: 'special-delivery',
-    title: 'Special Delivery',
-    blurb: 'Take the marked package car to the drop-off. Expect heat.',
-    reward: 900,
-  },
-  {
-    id: 'rampage',
-    title: 'Rampage',
-    blurb: 'Cause 1500 chaos points of mayhem before time runs out.',
-    reward: 750,
-  },
-];
-
-export class MissionManager {
-  constructor() {
-    this.active = null;   // runtime mission state
-    this.offerT = 6;      // delay before the first offer
-    this.messageQueue = [];
-    this.banner = null;   // {text, sub, t, kind}
+export class Missions {
+  constructor(world) {
+    this.world = world;
+    this.active = null; // {kind, stage, target, checkpoints, idx, timeLeft, pay}
+    this.completed = 0;
+    this.banner = '';
+    this.bannerTime = 0;
+    this.offerKind = 'delivery';
   }
 
-  phone(world, from, text) {
-    this.messageQueue.push({ from, text, t: 5.2 });
-    world.audio.phone();
+  get marisol() {
+    return this.world.city.marisol;
   }
 
-  startNext(world) {
-    const done = world.save.missionsDone;
-    const def = MISSION_DEFS.find((m) => !done.includes(m.id)) || MISSION_DEFS[world.rng.int(0, 2)];
-    this.begin(world, def);
+  nearMarisol() {
+    const p = this.world.player;
+    return !p.inCar && dist(p.x, p.y, this.marisol.x, this.marisol.y) < 40;
   }
 
-  begin(world, def) {
-    const p = world.player.pos;
-    const state = {
-      def,
-      phase: 'run',
-      t: 0,
-      timeLeft: 0,
-      checkpoint: null,
-      checkpoints: [],
-      idx: 0,
-      packageCar: null,
-      chaosStart: world.chaos,
-      target: 0,
-    };
-    if (def.id === 'bay-run') {
-      // Tuned after a playtest: 100s base, +14s per checkpoint reached.
-      state.timeLeft = 100;
-      const pts = [];
-      const spots = [
-        { x: 400, y: 400 }, { x: 1200, y: 400 }, { x: 2000, y: 800 },
-        { x: 2400, y: 1600 }, { x: 2000, y: 2400 }, { x: 2600, y: 2600 },
-      ];
-      for (const s of spots) {
-        const fixed = world.city.collideCircle(s.x, s.y, 20);
-        pts.push(fixed);
-      }
-      state.checkpoints = pts;
-      state.checkpoint = pts[0];
-      this.phone(world, CONTACT, 'Bay Run: checkpoints are lit on your map. Move!');
-    } else if (def.id === 'special-delivery') {
-      state.timeLeft = 150;
-      // Spawn the package car a couple of blocks away on a road.
-      const gx = Math.max(400, Math.round(p.x / 400) * 400);
-      const gy = Math.max(400, Math.round(p.y / 400) * 400);
-      const car = new Car(CAR_SPECS[1], gx + 30, gy + 120, Math.PI / 2, 'mission');
-      car.package = true;
-      world.cars.push(car);
-      state.packageCar = car;
-      state.phase = 'getcar';
-      state.checkpoint = { x: car.x, y: car.y };
-      this.phone(world, CONTACT, 'Special Delivery: grab the marked car. The package is inside.');
-    } else if (def.id === 'rampage') {
-      state.timeLeft = 50;
-      state.target = 1500;
-      state.chaosStart = world.chaos;
-      this.phone(world, CONTACT, 'Rampage: wreck, shoot, ram — 1500 chaos. Go loud!');
+  promptText() {
+    if (this.active) return null;
+    if (this.nearMarisol()) {
+      const label = { delivery: 'a delivery', pickup: 'a pickup', bayrun: 'the Bay Run' }[this.offerKind];
+      return `Marisol Vega: "I need ${label}. Step closer, we talk." — walk away and back to accept`;
     }
-    this.active = state;
-    world.events.push({ type: 'missionStart', id: def.id });
+    return null;
   }
 
-  fail(world, reason) {
-    if (!this.active) return;
-    this.banner = { text: 'MISSION FAILED', sub: reason, t: 3.2, kind: 'fail' };
-    world.audio.fail();
-    this.cleanup(world);
-    this.active = null;
-    this.offerT = 14;
-  }
-
-  complete(world) {
-    const def = this.active.def;
-    world.cash += def.reward;
-    if (!world.save.missionsDone.includes(def.id)) world.save.missionsDone.push(def.id);
-    this.banner = { text: 'MISSION COMPLETE', sub: `${def.title}  +$${def.reward}`, t: 3.6, kind: 'win' };
-    world.audio.success();
-    this.phone(world, CONTACT, `Clean work. $${def.reward} wired to you. — M`);
-    this.cleanup(world);
-    this.active = null;
-    this.offerT = 20;
-  }
-
-  cleanup(world) {
-    if (this.active && this.active.packageCar && this.active.packageCar.kind === 'mission') {
-      this.active.packageCar.package = false;
-      this.active.packageCar.kind = 'parked';
-    }
-  }
-
-  update(dt, world) {
-    // Phone messages age out.
-    for (const m of this.messageQueue) m.t -= dt;
-    this.messageQueue = this.messageQueue.filter((m) => m.t > 0);
-    if (this.banner) {
-      this.banner.t -= dt;
-      if (this.banner.t <= 0) this.banner = null;
-    }
+  update(dt) {
+    const w = this.world;
+    const p = w.player;
+    this.bannerTime = Math.max(0, this.bannerTime - dt);
 
     if (!this.active) {
-      if (world.state === 'playing') {
-        this.offerT -= dt;
-        if (this.offerT <= 0) {
-          this.offerT = 9999;
-          const done = world.save.missionsDone;
-          const def = MISSION_DEFS.find((m) => !done.includes(m.id));
-          if (def) {
-            this.phone(world, CONTACT, `Job for you: ${def.title}. ${def.blurb} Press F to accept.`);
-            this.pendingOffer = def;
-          } else {
-            this.phone(world, CONTACT, 'All my jobs are done. Press F for a repeat run.');
-            this.pendingOffer = MISSION_DEFS[0];
-          }
+      // Accept the offered job by standing with Marisol a moment.
+      if (this.nearMarisol()) {
+        this.acceptTimer = (this.acceptTimer || 0) + dt;
+        if (this.acceptTimer > 0.6) {
+          this.startJob(this.offerKind);
+          this.acceptTimer = 0;
         }
+      } else {
+        this.acceptTimer = 0;
       }
       return;
     }
 
-    const s = this.active;
-    s.t += dt;
-    s.timeLeft -= dt;
-    if (s.timeLeft <= 0) {
-      this.fail(world, 'Out of time.');
+    const job = this.active;
+    if (job.kind === 'bayrun') {
+      job.timeLeft -= dt;
+      const cp = job.checkpoints[job.idx];
+      if (cp && dist(p.x, p.y, cp.x, cp.y) < 56) {
+        job.idx++;
+        w.audio.pickup();
+        this.showBanner(`Checkpoint ${job.idx}/${job.checkpoints.length}`);
+        if (job.idx >= job.checkpoints.length) {
+          this.finishJob(job);
+          return;
+        }
+      }
+      if (job.timeLeft <= 0) {
+        this.failJob('Out of time. Marisol shrugs: "Traffic, huh?"');
+      }
       return;
     }
-    const p = world.player.pos;
 
-    if (s.def.id === 'bay-run') {
-      if (s.checkpoint && dist(p.x, p.y, s.checkpoint.x, s.checkpoint.y) < 62) {
-        world.audio.pickup();
-        world.cash += 40;
-        s.idx++;
-        if (s.idx >= s.checkpoints.length) {
-          this.complete(world);
-          return;
-        }
-        s.checkpoint = s.checkpoints[s.idx];
-        s.timeLeft += 14;
-      }
-    } else if (s.def.id === 'special-delivery') {
-      if (s.phase === 'getcar') {
-        if (world.player.inCar === s.packageCar) {
-          s.phase = 'deliver';
-          s.checkpoint = { x: 2520, y: 2760 };
-          world.wanted.addHeat(210, world);
-          this.phone(world, CONTACT, 'You have the package. Drop it at the marina warehouse — cops incoming!');
-        } else {
-          s.checkpoint = { x: s.packageCar.x, y: s.packageCar.y };
-          if (s.packageCar.dead) {
-            this.fail(world, 'The package car was wrecked.');
-            return;
-          }
-        }
-      } else if (s.phase === 'deliver') {
-        if (s.packageCar.dead) {
-          this.fail(world, 'The package car was wrecked.');
-          return;
-        }
-        if (world.player.inCar === s.packageCar && dist(p.x, p.y, s.checkpoint.x, s.checkpoint.y) < 70) {
-          this.complete(world);
-          return;
-        }
-      }
-    } else if (s.def.id === 'rampage') {
-      if (world.chaos - s.chaosStart >= s.target) {
-        this.complete(world);
+    // Delivery / pickup: reach the target (delivery wants a car).
+    const t = job.target;
+    if (dist(p.x, p.y, t.x, t.y) < 46) {
+      if (job.kind === 'delivery' && !p.inCar) {
+        this.hint = 'Marisol wants this done by car — grab some wheels.';
         return;
       }
+      this.finishJob(job);
     }
   }
 
-  objectiveText() {
-    const s = this.active;
-    if (!s) return null;
-    const time = Math.max(0, Math.ceil(s.timeLeft));
-    if (s.def.id === 'bay-run') return `${s.def.title}: checkpoint ${s.idx + 1}/${s.checkpoints.length} — ${time}s`;
-    if (s.def.id === 'special-delivery') {
-      return s.phase === 'getcar'
-        ? `${s.def.title}: get in the marked car — ${time}s`
-        : `${s.def.title}: reach the drop-off — ${time}s`;
+  startJob(kind) {
+    const w = this.world;
+    const rng = w.rng;
+    if (kind === 'bayrun') {
+      // Checkpoints ringing the marina promenade and the south shore.
+      const cps = [];
+      const spots = [
+        { x: WATER_X - 130, y: 300 },
+        { x: WATER_X - 130, y: 1150 },
+        { x: WATER_X - 130, y: 1900 },
+        { x: 2300, y: WATER_Y - 130 },
+        { x: 1400, y: WATER_Y - 130 },
+        { x: 500, y: WATER_Y - 130 },
+        { x: 256, y: 1900 },
+        { x: 256, y: 900 },
+      ];
+      for (const s of spots) cps.push({ x: s.x + rng.range(-14, 14), y: s.y + rng.range(-14, 14) });
+      this.active = { kind, checkpoints: cps, idx: 0, timeLeft: 150, pay: 420 };
+      this.showBanner('BAY RUN — hit every checkpoint before the clock dies!');
+    } else {
+      // A target on a random street corner, away from the player.
+      let tx = 0;
+      let ty = 0;
+      for (let tries = 0; tries < 20; tries++) {
+        tx = Math.floor(rng.range(1, 10)) * BLOCK + rng.range(-20, 20);
+        ty = Math.floor(rng.range(1, 10)) * BLOCK + rng.range(-20, 20);
+        if (dist(tx, ty, w.player.x, w.player.y) > 800) break;
+      }
+      this.active = { kind, target: { x: tx, y: ty }, pay: kind === 'delivery' ? 180 : 140 };
+      this.showBanner(kind === 'delivery'
+        ? 'DELIVERY — get the package across town (by car).'
+        : 'PICKUP — reach the contact and bring them in.');
     }
-    return `${s.def.title}: cause ${s.target} chaos — ${time}s`;
+    w.audio.blip(740, 0.09, 'triangle', 0.16);
   }
 
-  drawMarkers(ctx, world) {
-    const s = this.active;
-    if (!s || !s.checkpoint) return;
-    const { x, y } = s.checkpoint;
-    const pulse = 26 + Math.sin(world.time * 5) * 6;
-    ctx.save();
-    ctx.strokeStyle = '#ffe14d';
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(x, y, pulse, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,225,77,0.16)';
-    ctx.beginPath();
-    ctx.arc(x, y, pulse, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffe14d';
-    ctx.beginPath();
-    ctx.moveTo(x, y - pulse - 26);
-    ctx.lineTo(x - 11, y - pulse - 46);
-    ctx.lineTo(x + 11, y - pulse - 46);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+  finishJob(job) {
+    const w = this.world;
+    const bonus = job.kind === 'bayrun' ? Math.round(Math.max(0, job.timeLeft) * 2) : 0;
+    const total = job.pay + bonus;
+    w.save.cash += total;
+    w.save.rep += job.kind === 'bayrun' ? 3 : 1;
+    w.save.missionsDone += 1;
+    if (job.kind === 'bayrun') {
+      const elapsed = 150 - job.timeLeft;
+      if (w.save.bestBayRun === null || elapsed < w.save.bestBayRun) w.save.bestBayRun = Math.round(elapsed);
+    }
+    w.persist();
+    this.completed++;
+    this.active = null;
+    this.offerKind = JOB_KINDS[this.completed % JOB_KINDS.length];
+    this.showBanner(`Job done — $${total} from Marisol. Rep up.`);
+    w.audio.cash();
+  }
+
+  failJob(why) {
+    this.active = null;
+    this.showBanner(why);
+    this.offerKind = 'bayrun';
+  }
+
+  showBanner(text) {
+    this.banner = text;
+    this.bannerTime = 4;
+  }
+
+  // Objective marker info for HUD/minimap.
+  objective() {
+    if (!this.active) return { x: this.marisol.x, y: this.marisol.y, label: 'Marisol Vega', color: '#ffd94d' };
+    const job = this.active;
+    if (job.kind === 'bayrun') {
+      const cp = job.checkpoints[job.idx];
+      if (cp) return { x: cp.x, y: cp.y, label: `Bay Run ${job.idx + 1}/${job.checkpoints.length}`, color: '#4dd2ff' };
+      return null;
+    }
+    return { x: job.target.x, y: job.target.y, label: job.kind === 'delivery' ? 'Delivery' : 'Pickup', color: '#7dff6a' };
+  }
+
+  drawWorld(ctx, cam) {
+    const w = this.world;
+    // Marisol herself: standing figure with a gold marker.
+    const m = this.marisol;
+    const sx = m.x - cam.x;
+    const sy = m.y - cam.y;
+    if (sx > -40 && sy > -40 && sx < cam.w + 40 && sy < cam.h + 40) {
+      const bob = Math.sin(w.time * 2.2) * 3;
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.ellipse(sx, sy + 5, 9, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd94d';
+      ctx.beginPath();
+      ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#7a4a12';
+      ctx.beginPath();
+      ctx.arc(sx, sy - 2, 4.4, 0, Math.PI * 2);
+      ctx.fill();
+      // Floating "!".
+      ctx.fillStyle = '#ffd94d';
+      ctx.font = 'bold 20px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(this.active ? '…' : '!', sx, sy - 18 + bob);
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('Marisol Vega', sx, sy + 24);
+    }
+
+    // Objective beacon.
+    const obj = this.objective();
+    if (obj && this.active) {
+      const ox = obj.x - cam.x;
+      const oy = obj.y - cam.y;
+      const pulse = 14 + Math.sin(w.time * 4) * 4;
+      ctx.strokeStyle = obj.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(ox, oy, pulse + 12, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = obj.color;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.arc(ox, oy, pulse + 12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
   }
 }

@@ -1,169 +1,162 @@
-// police.js — the wanted system and the Coral Marina PD.
-// Crimes raise heat; heat maps to 1-5 stars. Police cruisers spawn at
-// the edge of view and chase, steering to ram the player's car or cut
-// off the player on foot. Staying out of sight drains heat. If officers
-// stay close while the player is slow or on foot, the BUSTED meter
-// fills; a full meter ends the run.
+// police.js — the Coral Marina PD: a wanted-level heat system fed by
+// reported crimes, cruiser spawns at the map edge of the player's view,
+// pursuit driving, ramming, and foot pursuit with a bust meter.
 
-import { Car, POLICE_SPEC } from './vehicles.js';
-import { clamp, dist, angleTo, wrapAngle } from './rng.js';
-import { WORLD } from './city.js';
+import { makeCar, stepCar } from './vehicles.js';
+import { clamp, dist } from './rng.js';
+import { BLOCK } from './city.js';
 
-export const HEAT_PER_STAR = 100;
-
-export class WantedSystem {
-  constructor() {
-    this.heat = 0;
-    this.busted = 0;      // 0..1
-    this.hiddenT = 0;     // time since police last saw the player
-    this.everWanted = false;
+export class Police {
+  constructor(world) {
+    this.world = world;
+    this.heat = 0; // 0..5 fractional; stars = ceil while > 0
+    this.cruisers = [];
+    this.officers = [];
+    this.cooldown = 0; // time since the player was last seen
+    this.spawnTimer = 0;
+    this.bust = 0; // 0..1 bust meter while an officer is on top of you
   }
 
   get stars() {
-    if (this.heat <= 0) return 0;
-    return clamp(Math.ceil(this.heat / HEAT_PER_STAR), 1, 5);
+    return this.heat <= 0 ? 0 : Math.min(5, Math.ceil(this.heat));
   }
 
-  addHeat(amount, world) {
-    const before = this.stars;
-    this.heat = clamp(this.heat + amount, 0, HEAT_PER_STAR * 5);
-    if (this.heat > 0) this.everWanted = true;
-    if (this.stars > before && world) {
-      world.events.push({ type: 'starsUp', stars: this.stars });
-    }
+  // Crimes reported by gameplay systems. `weight` adds heat.
+  reportCrime(kind, x, y, weight = 1) {
+    const w = this.world;
+    // Only witnessed crimes count in full; far-away ones count less.
+    const d = dist(x, y, w.player.x, w.player.y);
+    const factor = d < 700 ? 1 : 0.4;
+    const gains = { theft: 0.9, assault: 1.2, shots: 0.7, collision: 0.35, speeding: 0.2 };
+    this.heat = clamp(this.heat + (gains[kind] || 0.5) * weight * factor, 0, 5);
+    this.cooldown = 0;
   }
 
-  update(dt, world) {
-    const p = world.player.pos;
-    let seen = false;
-    for (const cop of world.police) {
-      if (cop.car.dead) continue;
-      if (dist(cop.car.x, cop.car.y, p.x, p.y) < 460) { seen = true; break; }
-    }
-    if (seen) {
-      this.hiddenT = 0;
+  desiredCruisers() {
+    return [0, 1, 2, 3, 4, 6][this.stars] || 0;
+  }
+
+  spawnCruiser() {
+    const w = this.world;
+    const p = w.player;
+    // Spawn on a street roughly 620px away, out of immediate view.
+    const angle = w.rng.range(0, Math.PI * 2);
+    let x = p.x + Math.cos(angle) * 620;
+    let y = p.y + Math.sin(angle) * 620;
+    // Snap to the nearest street centreline.
+    x = Math.round(x / BLOCK) * BLOCK + (Math.cos(angle) > 0 ? -19 : 19);
+    y = Math.max(40, Math.min(2840, y));
+    x = Math.max(40, Math.min(2840, x));
+    const car = makeCar(x, y, Math.atan2(p.y - y, p.x - x), '#ffffff', 'police');
+    car.driver = 'police';
+    car.cruise = 330;
+    this.cruisers.push(car);
+  }
+
+  update(dt) {
+    const w = this.world;
+    const p = w.player;
+
+    // Heat decay: stay unseen and clean to cool off.
+    const anyNear = this.cruisers.some((c) => dist(c.x, c.y, p.x, p.y) < 460) ||
+      this.officers.some((o) => dist(o.x, o.y, p.x, p.y) < 300);
+    if (anyNear) {
+      this.cooldown = 0;
     } else {
-      this.hiddenT += dt;
-      if (this.stars > 0 && this.hiddenT > 2.5) {
-        this.heat = Math.max(0, this.heat - dt * 9);
+      this.cooldown += dt;
+      if (this.cooldown > 6 && this.heat > 0) {
+        this.heat = Math.max(0, this.heat - dt * 0.14);
+      }
+    }
+    if (this.heat <= 0.02 && this.cruisers.length === 0) this.heat = 0;
+
+    // Spawning.
+    this.spawnTimer -= dt;
+    if (this.spawnTimer <= 0) {
+      this.spawnTimer = 1.6;
+      if (this.cruisers.length < this.desiredCruisers()) this.spawnCruiser();
+    }
+    // Despawn far cruisers when the heat is gone.
+    if (this.stars === 0) {
+      this.cruisers = this.cruisers.filter((c) => dist(c.x, c.y, p.x, p.y) < 900);
+    }
+
+    // Cruiser pursuit: steer at a point ahead of the player.
+    for (const car of this.cruisers) {
+      const targetX = p.x + (p.inCar ? p.inCar.vx * 0.35 : 0);
+      const targetY = p.y + (p.inCar ? p.inCar.vy * 0.35 : 0);
+      const desired = Math.atan2(targetY - car.y, targetX - car.x);
+      let diff = desired - car.angle;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      const steer = clamp(diff * 1.6, -1, 1);
+      const d = dist(car.x, car.y, p.x, p.y);
+      let throttle = 1;
+      if (d < 60) throttle = 0.2;
+      if (Math.abs(diff) > 2.4) throttle = -0.6; // reverse out of a bad angle
+      const crashed = stepCar(car, throttle, steer, dt, w.city);
+      if (crashed) w.audio.crash(0.2);
+      // Ram damage.
+      if (p.inCar && d < 34 && Math.abs(car.speed) > 90) {
+        p.inCar.health -= 9 * dt * 4;
+        p.health -= 3 * dt;
+      }
+      // An officer steps out when close to a foot player and slow.
+      if (!p.inCar && d < 90 && Math.abs(car.speed) < 30 && this.officers.length < this.stars + 1) {
+        this.officers.push({ x: car.x + 18, y: car.y, angle: 0, speed: 128, car });
       }
     }
 
-    // Busted meter: close police + slow/on-foot player.
-    let nearest = Infinity;
-    for (const cop of world.police) {
-      if (cop.car.dead) continue;
-      nearest = Math.min(nearest, dist(cop.car.x, cop.car.y, p.x, p.y));
-    }
-    const playerSpeed = world.player.inCar ? world.player.inCar.speed() : world.player.speedNow();
-    const vulnerable = this.stars > 0 && nearest < 120 && playerSpeed < 55;
-    if (vulnerable) {
-      this.busted = clamp(this.busted + dt * 0.34, 0, 1);
-    } else {
-      this.busted = clamp(this.busted - dt * 0.5, 0, 1);
-    }
-    if (this.heat <= 0) this.busted = 0;
-    return seen;
-  }
-}
-
-export class PoliceCar {
-  constructor(car) {
-    this.car = car;
-    this.stuckT = 0;
-    this.lastX = car.x;
-    this.lastY = car.y;
-    this.reverseT = 0;
-  }
-
-  update(dt, world) {
-    const c = this.car;
-    if (c.dead) return;
-    const target = world.player.pos;
-    const d = dist(c.x, c.y, target.x, target.y);
-
-    // Aim slightly ahead of a moving target so cruisers intercept.
-    let tx = target.x;
-    let ty = target.y;
-    if (world.player.inCar) {
-      tx += world.player.inCar.vx * 0.45;
-      ty += world.player.inCar.vy * 0.45;
-    }
-    // When very close on foot, ease off so the bust can happen.
-    const wantRam = world.player.inCar !== null || d > 130;
-
-    if (this.reverseT > 0) {
-      this.reverseT -= dt;
-      c.throttle = -1;
-      c.steer = clamp(wrapAngle(angleTo(c.x, c.y, tx, ty) - c.angle) * 2, -1, 1);
-    } else {
-      const desired = angleTo(c.x, c.y, tx, ty);
-      const diff = wrapAngle(desired - c.angle);
-      c.steer = clamp(diff * 2.4, -1, 1);
-      c.throttle = Math.abs(diff) > 2.2 ? -0.7 : 1;
-      if (!wantRam && d < 60) c.throttle = 0.15;
-      c.handbrake = Math.abs(diff) > 1.15 && c.speed() > 200;
-    }
-    c.physics(dt);
-    const impact = c.collideCity(world.city);
-    if (impact > 170 && world.player.inCar) {
-      // Ramming transfers some hurt to the player's car.
-    }
-    c.x = clamp(c.x, 30, WORLD - 30);
-    c.y = clamp(c.y, 30, WORLD - 30);
-
-    // Stuck detection: reverse out.
-    if (c.speed() < 14 && c.throttle > 0) {
-      this.stuckT += dt;
-      if (this.stuckT > 0.9) {
-        this.reverseT = 0.65;
-        this.stuckT = 0;
+    // Officers on foot chase and build the bust meter.
+    this.bust = Math.max(0, this.bust - dt * 0.25);
+    for (const o of this.officers) {
+      const d = dist(o.x, o.y, p.x, p.y);
+      if (p.inCar || this.stars === 0) {
+        // Get back in the car / give up.
+        o.x += Math.cos(Math.atan2(o.car.y - o.y, o.car.x - o.x)) * o.speed * dt;
+        o.y += Math.sin(Math.atan2(o.car.y - o.y, o.car.x - o.x)) * o.speed * dt;
+        if (dist(o.x, o.y, o.car.x, o.car.y) < 16) o.done = true;
+        continue;
       }
-    } else {
-      this.stuckT = 0;
+      const a = Math.atan2(p.y - o.y, p.x - o.x);
+      o.angle = a;
+      if (d > 20) {
+        o.x += Math.cos(a) * o.speed * dt;
+        o.y += Math.sin(a) * o.speed * dt;
+      } else {
+        this.bust += dt * 0.55;
+        if (this.bust >= 1) w.busted();
+      }
     }
-    this.lastX = c.x;
-    this.lastY = c.y;
-  }
-}
+    this.officers = this.officers.filter((o) => !o.done);
 
-export class PoliceManager {
-  constructor() {
-    this.spawnT = 0;
+    // Siren audio while any cruiser is near.
+    const nearest = this.cruisers.reduce((m, c) => Math.min(m, dist(c.x, c.y, p.x, p.y)), Infinity);
+    w.audio.siren(this.stars > 0 && nearest < 700, dt);
   }
 
-  desiredCount(stars) {
-    return [0, 2, 3, 4, 6, 8][clamp(stars, 0, 5)];
-  }
-
-  update(dt, world) {
-    const stars = world.wanted.stars;
-    this.spawnT -= dt;
-    // Remove wrecks and far-away cruisers.
-    world.police = world.police.filter((cop) => {
-      if (cop.car.dead) return false;
-      return dist(cop.car.x, cop.car.y, world.player.pos.x, world.player.pos.y) < 1900;
-    });
-    world.cars = world.cars.filter((car) => car.kind !== 'police' || world.police.some((p) => p.car === car));
-
-    const want = this.desiredCount(stars);
-    if (world.police.length < want && this.spawnT <= 0) {
-      this.spawnT = 1.6;
-      const p = world.player.pos;
-      const a = world.rng.float(0, Math.PI * 2);
-      const r = 640;
-      let x = clamp(p.x + Math.cos(a) * r, 60, WORLD - 60);
-      let y = clamp(p.y + Math.sin(a) * r, 60, WORLD - 60);
-      const fixed = world.city.collideCircle(x, y, 30);
-      x = fixed.x;
-      y = fixed.y;
-      const car = new Car(POLICE_SPEC, x, y, angleTo(x, y, p.x, p.y), 'police');
-      car.driver = 'ai';
-      world.police.push(new PoliceCar(car));
-      world.cars.push(car);
-      world.events.push({ type: 'siren', x, y });
+  drawOfficers(ctx, cam) {
+    for (const o of this.officers) {
+      const sx = o.x - cam.x;
+      const sy = o.y - cam.y;
+      if (sx < -20 || sy < -20 || sx > cam.w + 20 || sy > cam.h + 20) continue;
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
+      ctx.beginPath();
+      ctx.ellipse(0, 4, 8, 4, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1b2a4a';
+      ctx.beginPath();
+      ctx.arc(0, 0, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#e8c39e';
+      ctx.beginPath();
+      ctx.arc(Math.cos(o.angle) * 2.5, Math.sin(o.angle) * 2.5, 3.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ffd94d';
+      ctx.fillRect(-4, -8, 8, 3);
+      ctx.restore();
     }
-
-    for (const cop of world.police) cop.update(dt, world);
   }
 }

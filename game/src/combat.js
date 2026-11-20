@@ -1,192 +1,133 @@
-// combat.js — mouse-aim hitscan shooting. Holding the mouse fires the
-// pistol at a fixed rate; each shot traces instantly to the nearest
-// building, car or pedestrian, spawns a tracer + sparks, applies damage
-// and feeds the chaos score and wanted heat.
+// combat.js — mouse-aimed shooting: hitscan-feel projectiles with
+// tracers, hit reactions for pedestrians, officers and cars, and the
+// damage the player takes from police fire.
 
-import { dist, angleTo } from './rng.js';
+import { input } from './input.js';
+import { dist } from './rng.js';
+import { hitsBuilding } from './city.js';
 
 export class Combat {
-  constructor() {
-    this.fireCooldown = 0;
-    this.fireRate = 0.16;
-    this.range = 560;
-    this.tracers = [];
-    this.muzzleT = 0;
+  constructor(world) {
+    this.world = world;
+    this.bullets = []; // {x,y,vx,vy,life,from}
+    this.tracers = []; // {x1,y1,x2,y2,life}
     this.shotsFired = 0;
+    this.fireCooldown = 0;
+    this.lastShotAt = -99;
+    this.enemyCooldown = 0;
+    this.muzzle = 0;
   }
 
-  update(dt, world, input) {
+  update(dt) {
+    const w = this.world;
+    const p = w.player;
     this.fireCooldown -= dt;
-    this.muzzleT -= dt;
-    for (const t of this.tracers) t.life -= dt;
-    this.tracers = this.tracers.filter((t) => t.life > 0);
+    this.muzzle = Math.max(0, this.muzzle - dt * 9);
 
-    const player = world.player;
-    if (player.inCar || player.dead || world.state !== 'playing') return;
-    if (!input.mouse.down) return;
-    if (this.fireCooldown > 0) return;
-    this.fireCooldown = this.fireRate;
-    this.shotsFired++;
+    // Player fire: hold the mouse, on foot only.
+    if (!p.inCar && input.mouseDown && this.fireCooldown <= 0 && w.state === 'playing') {
+      this.fireCooldown = 0.14;
+      this.shotsFired++;
+      this.lastShotAt = w.time;
+      this.muzzle = 1;
+      w.audio.shot();
+      const a = w.aimAngle + w.rng.range(-0.03, 0.03);
+      this.bullets.push({
+        x: p.x + Math.cos(a) * 14,
+        y: p.y + Math.sin(a) * 14,
+        vx: Math.cos(a) * 900,
+        vy: Math.sin(a) * 900,
+        life: 0.45,
+        from: 'player',
+      });
+      w.police.reportCrime('shots', p.x, p.y, 0.55);
+    }
 
-    const from = { x: player.x, y: player.y };
-    const aim = world.screenToWorld(input.mouse.x, input.mouse.y);
-    const angle = angleTo(from.x, from.y, aim.x, aim.y);
-    this.muzzleT = 0.05;
-    world.audio.shot();
-    world.events.push({ type: 'gunshot', x: from.x, y: from.y });
-
-    // Find the nearest hit along the ray.
-    let bestT = this.range;
-    let hitKind = null;
-    let hitTarget = null;
-
-    // Buildings: step the ray until it enters a collider.
-    const steps = 56;
-    for (let i = 1; i <= steps; i++) {
-      const t = (i / steps) * this.range;
-      const x = from.x + Math.cos(angle) * t;
-      const y = from.y + Math.sin(angle) * t;
-      if (world.city.rectHitsBuilding(x, y, 2, 2)) {
-        if (t < bestT) { bestT = t; hitKind = 'building'; hitTarget = null; }
-        break;
+    // Police fire: officers and stopped cruisers shoot when they have
+    // a clear line at higher wanted levels.
+    this.enemyCooldown -= dt;
+    if (w.police.stars >= 2 && this.enemyCooldown <= 0) {
+      const shooters = w.police.officers.filter((o) => dist(o.x, o.y, p.x, p.y) < 300);
+      if (shooters.length > 0 && !hitsBuilding(w.city, p.x, p.y, 2)) {
+        this.enemyCooldown = 0.8;
+        const o = shooters[0];
+        const a = Math.atan2(p.y - o.y, p.x - o.x) + w.rng.range(-0.09, 0.09);
+        this.bullets.push({
+          x: o.x, y: o.y,
+          vx: Math.cos(a) * 780, vy: Math.sin(a) * 780,
+          life: 0.5, from: 'police',
+        });
+        w.audio.shot();
       }
     }
-    // Cars.
-    for (const car of world.cars) {
-      const d = rayCircle(from, angle, car.x, car.y, Math.max(car.spec.w, car.spec.h) * 0.55);
-      if (d !== null && d < bestT) { bestT = d; hitKind = 'car'; hitTarget = car; }
-    }
-    // Pedestrians.
-    for (const ped of world.peds) {
-      if (ped.dead) continue;
-      const d = rayCircle(from, angle, ped.x, ped.y, 13);
-      if (d !== null && d < bestT) { bestT = d; hitKind = 'ped'; hitTarget = ped; }
-    }
-    // Police officers count as cars (their cruisers) — handled above.
 
-    const hx = from.x + Math.cos(angle) * bestT;
-    const hy = from.y + Math.sin(angle) * bestT;
-    this.tracers.push({
-      x1: from.x + Math.cos(angle) * 20, y1: from.y + Math.sin(angle) * 20,
-      x2: hx, y2: hy, life: 0.07, maxLife: 0.07,
-    });
-
-    if (hitKind === 'car') {
-      hitTarget.damage(9);
-      world.audio.hit();
-      world.addChaos(6, hx, hy);
-      world.wanted.addHeat(7, world);
-      spawnSparks(world, hx, hy, '255,190,80');
-      if (hitTarget.kind === 'police') world.wanted.addHeat(10, world);
-      if (hitTarget.dead) {
-        world.addChaos(120, hx, hy);
-        world.wanted.addHeat(30, world);
-        world.events.push({ type: 'explosion', x: hx, y: hy });
+    // Bullet flight + hits.
+    for (const b of this.bullets) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+      b.life -= dt;
+      if (b.life <= 0) continue;
+      if (hitsBuilding(w.city, b.x, b.y, 2)) {
+        b.life = 0;
+        continue;
       }
-    } else if (hitKind === 'ped') {
-      hitTarget.hurt();
-      world.audio.hit();
-      world.addChaos(45, hx, hy);
-      world.wanted.addHeat(34, world);
-      world.events.push({ type: 'pedDown', x: hx, y: hy });
-      spawnSparks(world, hx, hy, '220,60,50');
-    } else if (hitKind === 'building') {
-      spawnSparks(world, hx, hy, '240,230,180');
+      if (b.from === 'player') {
+        for (const ped of w.pedestrians) {
+          if (ped.state !== 'down' && dist(b.x, b.y, ped.x, ped.y) < 9) {
+            ped.state = 'down';
+            ped.downTime = 0;
+            b.life = 0;
+            w.police.reportCrime('assault', ped.x, ped.y, 1.1);
+            break;
+          }
+        }
+        if (b.life <= 0) continue;
+        for (const o of w.police.officers) {
+          if (dist(b.x, b.y, o.x, o.y) < 9) {
+            o.done = true;
+            b.life = 0;
+            w.police.reportCrime('assault', o.x, o.y, 1.4);
+            break;
+          }
+        }
+        if (b.life <= 0) continue;
+        for (const car of w.allCars()) {
+          if (dist(b.x, b.y, car.x, car.y) < 24) {
+            car.health -= 7;
+            b.life = 0;
+            break;
+          }
+        }
+      } else if (dist(b.x, b.y, p.x, p.y) < (p.inCar ? 24 : 10)) {
+        p.health -= 6;
+        b.life = 0;
+        if (p.inCar) p.inCar.health -= 3;
+      }
     }
-
-    // Gunfire panics nearby pedestrians and alerts police ears.
-    for (const ped of world.peds) ped.scare(from.x, from.y, 4);
+    this.bullets = this.bullets.filter((b) => b.life > 0);
   }
 
-  draw(ctx) {
-    for (const t of this.tracers) {
-      const a = t.life / t.maxLife;
-      ctx.strokeStyle = `rgba(255,225,120,${0.85 * a})`;
-      ctx.lineWidth = 2;
+  draw(ctx, cam) {
+    const w = this.world;
+    // Muzzle flash.
+    if (this.muzzle > 0 && !w.player.inCar) {
+      const p = w.player;
+      const mx = p.x + Math.cos(w.aimAngle) * 18 - cam.x;
+      const my = p.y + Math.sin(w.aimAngle) * 18 - cam.y;
+      ctx.fillStyle = `rgba(255,210,80,${0.75 * this.muzzle})`;
       ctx.beginPath();
-      ctx.moveTo(t.x1, t.y1);
-      ctx.lineTo(t.x2, t.y2);
-      ctx.stroke();
+      ctx.arc(mx, my, 7 * this.muzzle + 2, 0, Math.PI * 2);
+      ctx.fill();
     }
-  }
-
-  drawMuzzle(ctx, player) {
-    if (this.muzzleT <= 0 || player.inCar) return;
-    const x = player.x + Math.cos(player.angle) * 26;
-    const y = player.y + Math.sin(player.angle) * 26;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(player.angle);
-    ctx.fillStyle = 'rgba(255,190,60,0.95)';
+    ctx.strokeStyle = 'rgba(255,240,180,0.9)';
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, -4);
-    ctx.lineTo(13, 0);
-    ctx.lineTo(0, 4);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
-function rayCircle(from, angle, cx, cy, r) {
-  const dx = cx - from.x;
-  const dy = cy - from.y;
-  const along = dx * Math.cos(angle) + dy * Math.sin(angle);
-  if (along < 0) return null;
-  const perp = Math.abs(-dx * Math.sin(angle) + dy * Math.cos(angle));
-  if (perp > r) return null;
-  return along;
-}
-
-export function spawnSparks(world, x, y, color) {
-  for (let i = 0; i < 6; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const sp = 40 + Math.random() * 130;
-    world.particles.push({
-      x, y,
-      vx: Math.cos(a) * sp,
-      vy: Math.sin(a) * sp,
-      life: 0.28, maxLife: 0.28,
-      size: 2.4, color, kind: 'spark',
-    });
-  }
-}
-
-export function updateParticles(world, dt) {
-  for (const p of world.particles) {
-    p.life -= dt;
-    p.x += p.vx * dt;
-    p.y += p.vy * dt;
-    if (p.kind === 'smoke' || p.kind === 'fire') {
-      p.size += dt * 9;
-      p.vx *= Math.pow(0.2, dt);
+    for (const b of this.bullets) {
+      const sx = b.x - cam.x;
+      const sy = b.y - cam.y;
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx - b.vx * 0.016, sy - b.vy * 0.016);
     }
-    if (p.kind === 'spark') {
-      p.vx *= Math.pow(0.01, dt);
-      p.vy *= Math.pow(0.01, dt);
-    }
+    ctx.stroke();
   }
-  world.particles = world.particles.filter((p) => p.life > 0);
-}
-
-export function drawParticles(ctx, world) {
-  for (const p of world.particles) {
-    const a = Math.max(0, p.life / p.maxLife);
-    if (p.kind === 'fire') {
-      ctx.fillStyle = `rgba(${p.color},${0.75 * a})`;
-    } else if (p.kind === 'smoke') {
-      ctx.fillStyle = `rgba(${p.color},${0.4 * a})`;
-    } else if (p.kind === 'text') {
-      continue;
-    } else {
-      ctx.fillStyle = `rgba(${p.color},${a})`;
-    }
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-    ctx.fill();
-  }
-}
-
-export function distCheck(a, b) {
-  return dist(a.x, a.y, b.x, b.y);
 }

@@ -1,184 +1,151 @@
-// pedestrians.js — pedestrians who stroll the sidewalks and plazas,
-// wander between waypoints, and flee from gunfire, explosions and
-// fast-approaching cars. Getting run over or shot takes them down.
+// pedestrians.js — Coral Marina citizens strolling the sidewalks.
+// They wander block to block, panic and flee when violence erupts
+// nearby, and drop when shot or run over (which the police notice).
 
-import { clamp, dist, angleTo } from './rng.js';
-import { WORLD, onRoad, isWater } from './city.js';
+import { BLOCK, ROAD_W, WATER_X, WATER_Y, hitsBuilding } from './city.js';
+import { Rng, clamp, dist } from './rng.js';
 
-const SHIRTS = ['#e8e3d8', '#7fb3d5', '#f1948a', '#82e0aa', '#f9e79f', '#d2b4de', '#f5cba7', '#aed6f1', '#f0b27a', '#95d5b2'];
-const PANTS = ['#34495e', '#5d4037', '#616a6b', '#1a5276', '#7d3c98'];
+const SHIRTS = ['#ff6b6b', '#feca57', '#48dbfb', '#1dd1a1', '#f368e0', '#ff9f43', '#54a0ff', '#5f27cd', '#c8d6e5', '#ff9ff3'];
+const PANTS = ['#2f3542', '#57606f', '#3b3b98', '#82589F', '#1e3799', '#6a5a44'];
 
-let pedId = 1;
-
-export class Pedestrian {
-  constructor(rng, x, y) {
-    this.id = pedId++;
-    this.x = x;
-    this.y = y;
-    this.vx = 0;
-    this.vy = 0;
-    this.angle = rng.float(0, Math.PI * 2);
-    this.speed = rng.float(52, 88);
-    this.state = 'wander'; // wander | flee | down
-    this.target = null;
-    this.waitT = rng.float(0, 2);
-    this.fleeT = 0;
-    this.fleeFrom = null;
-    this.dead = false;
-    this.phase = rng.float(0, 6.28);
-    this.shirt = rng.pick(SHIRTS);
-    this.pants = rng.pick(PANTS);
-    this.skin = rng.pick(['#ffd9a0', '#e8b48a', '#b57e52', '#8a5a34']);
-    this.rng = rng;
-  }
-
-  scare(x, y, seconds = 4) {
-    if (this.dead) return;
-    if (dist(this.x, this.y, x, y) < 340) {
-      this.state = 'flee';
-      this.fleeT = seconds;
-      this.fleeFrom = { x, y };
-    }
-  }
-
-  hurt() {
-    this.dead = true;
-    this.state = 'down';
-  }
-
-  pickTarget(city) {
-    for (let i = 0; i < 10; i++) {
-      const x = clamp(this.x + this.rng.float(-260, 260), 30, WORLD - 30);
-      const y = clamp(this.y + this.rng.float(-260, 260), 30, WORLD - 30);
-      if (isWater(x, y)) continue;
-      const fixed = city.collideCircle(x, y, 12);
-      this.target = fixed;
-      return;
-    }
-    this.target = { x: this.x, y: this.y };
-  }
-
-  update(dt, world) {
-    if (this.dead) return;
-    const city = world.city;
-    this.phase += dt * 8;
-
-    if (this.state === 'flee') {
-      this.fleeT -= dt;
-      if (this.fleeT <= 0 || !this.fleeFrom) {
-        this.state = 'wander';
-        this.target = null;
-      } else {
-        const away = angleTo(this.fleeFrom.x, this.fleeFrom.y, this.x, this.y);
-        const runSpeed = 196;
-        this.vx = Math.cos(away) * runSpeed;
-        this.vy = Math.sin(away) * runSpeed;
-        this.angle = away;
-        this.move(dt, city);
-        return;
-      }
-    }
-
-    // A fast car bearing down scares a pedestrian out of the road.
-    for (const car of world.cars) {
-      if (car.dead) continue;
-      const cs = car.speed();
-      if (cs > 130 && dist(this.x, this.y, car.x, car.y) < 85) {
-        this.scare(car.x, car.y, 1.6);
-        break;
-      }
-    }
-    if (this.state === 'flee') return;
-
-    if (this.waitT > 0) {
-      this.waitT -= dt;
-      this.vx *= Math.pow(0.001, dt);
-      this.vy *= Math.pow(0.001, dt);
-      return;
-    }
-    if (!this.target || dist(this.x, this.y, this.target.x, this.target.y) < 14) {
-      this.pickTarget(city);
-      if (this.rng.chance(0.25)) this.waitT = this.rng.float(0.6, 2.4);
-    }
-    if (this.target) {
-      const a = angleTo(this.x, this.y, this.target.x, this.target.y);
-      this.angle = a;
-      this.vx = Math.cos(a) * this.speed;
-      this.vy = Math.sin(a) * this.speed;
-    }
-    this.move(dt, city);
-  }
-
-  move(dt, city) {
-    const nx = this.x + this.vx * dt;
-    const ny = this.y + this.vy * dt;
-    if (isWater(nx, ny)) {
-      this.vx = 0;
-      this.vy = 0;
-      this.target = null;
-      return;
-    }
-    const fixed = city.collideCircle(nx, ny, 10);
-    this.x = fixed.x;
-    this.y = fixed.y;
-  }
-
-  draw(ctx) {
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    if (this.dead) {
-      ctx.rotate(this.angle + Math.PI / 2);
-      ctx.fillStyle = this.pants;
-      ctx.fillRect(-4, -3, 16, 6);
-      ctx.fillStyle = this.shirt;
-      ctx.beginPath();
-      ctx.arc(-8, 0, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = this.skin;
-      ctx.beginPath();
-      ctx.arc(-16, 0, 4.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.beginPath();
-    ctx.ellipse(0, 4, 9, 4.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    const step = Math.sin(this.phase) * 4;
-    ctx.strokeStyle = this.pants;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(step * Math.cos(this.angle), step * Math.sin(this.angle));
-    ctx.moveTo(0, 0);
-    ctx.lineTo(-step * Math.cos(this.angle), -step * Math.sin(this.angle));
-    ctx.stroke();
-    ctx.rotate(this.angle);
-    ctx.fillStyle = this.shirt;
-    ctx.beginPath();
-    ctx.arc(0, 0, 8.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = this.skin;
-    ctx.beginPath();
-    ctx.arc(2.5, 0, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-  }
-}
-
-export function spawnPeds(rng, city, centre, count, minD = 120, maxD = 1000) {
+export function spawnPedestrians(seed, count) {
+  const rng = new Rng(seed * 131 + 29);
   const peds = [];
-  let guard = 0;
-  while (peds.length < count && guard++ < count * 60) {
-    const x = clamp(centre.x + rng.float(-maxD, maxD), 40, WORLD - 40);
-    const y = clamp(centre.y + rng.float(-maxD, maxD), 40, WORLD - 40);
-    if (isWater(x, y)) continue;
-    if (dist(x, y, centre.x, centre.y) < minD) continue;
-    const fixed = city.collideCircle(x, y, 12);
-    if (Math.abs(fixed.x - x) > 2 || Math.abs(fixed.y - y) > 2) continue;
-    if (onRoad(x, y) && rng.chance(0.7)) continue; // most peds keep off the road
-    peds.push(new Pedestrian(rng, fixed.x, fixed.y));
+  for (let i = 0; i < count; i++) {
+    const x = rng.range(80, WATER_X - 80);
+    const y = rng.range(80, WATER_Y - 80);
+    peds.push({
+      x, y,
+      angle: rng.range(0, Math.PI * 2),
+      speed: rng.range(28, 52),
+      shirt: rng.pick(SHIRTS),
+      pants: rng.pick(PANTS),
+      skin: rng.pick(['#f2c79b', '#c68863', '#8d5524', '#ffdbac']),
+      state: 'walk', // 'walk' | 'flee' | 'down'
+      targetX: x,
+      targetY: y,
+      retarget: rng.range(0, 3),
+      panic: 0,
+      downTime: 0,
+      phase: rng.range(0, Math.PI * 2),
+    });
   }
   return peds;
+}
+
+// A sidewalk-ish waypoint: near a street but not on the asphalt.
+function pickWaypoint(world, ped) {
+  const rng = world.rng;
+  for (let tries = 0; tries < 8; tries++) {
+    const gx = Math.floor(rng.range(0, WORLD_BLOCKS));
+    const gy = Math.floor(rng.range(0, WORLD_BLOCKS));
+    const edge = ROAD_W / 2 + 16;
+    const x = gx * BLOCK + (rng.chance(0.5) ? edge : BLOCK - edge) + rng.range(-6, 6);
+    const y = gy * BLOCK + rng.range(20, BLOCK - 20);
+    const px = rng.chance(0.5) ? x : y;
+    const py = rng.chance(0.5) ? y : x;
+    if (px < WATER_X - 30 && py < WATER_Y - 30 && !hitsBuilding(world.city, px, py, 8)) {
+      ped.targetX = px;
+      ped.targetY = py;
+      return;
+    }
+  }
+  ped.targetX = ped.x + rng.range(-120, 120);
+  ped.targetY = ped.y + rng.range(-120, 120);
+}
+
+const WORLD_BLOCKS = 11;
+
+export function updatePedestrians(world, dt) {
+  const { player } = world;
+  for (const ped of world.pedestrians) {
+    if (ped.state === 'down') {
+      ped.downTime += dt;
+      continue;
+    }
+    ped.phase += dt * 8;
+
+    // Panic: gunfire or a speeding car nearby.
+    const threatNear =
+      world.combat.lastShotAt > 0 &&
+      world.time - world.combat.lastShotAt < 1.2 &&
+      dist(ped.x, ped.y, player.x, player.y) < 260;
+    if (threatNear) ped.panic = 2.5;
+    ped.panic = Math.max(0, ped.panic - dt);
+
+    let tx;
+    let ty;
+    let speed = ped.speed;
+    if (ped.panic > 0) {
+      // Flee directly away from the player.
+      const a = Math.atan2(ped.y - player.y, ped.x - player.x);
+      tx = ped.x + Math.cos(a) * 100;
+      ty = ped.y + Math.sin(a) * 100;
+      speed = 120;
+    } else {
+      ped.retarget -= dt;
+      if (ped.retarget <= 0 || dist(ped.x, ped.y, ped.targetX, ped.targetY) < 12) {
+        pickWaypoint(world, ped);
+        ped.retarget = world.rng.range(4, 9);
+      }
+      tx = ped.targetX;
+      ty = ped.targetY;
+    }
+
+    const a = Math.atan2(ty - ped.y, tx - ped.x);
+    ped.angle = a;
+    const nx = ped.x + Math.cos(a) * speed * dt;
+    const ny = ped.y + Math.sin(a) * speed * dt;
+    if (!hitsBuilding(world.city, nx, ny, 7)) {
+      ped.x = clamp(nx, 12, WATER_X - 8);
+      ped.y = clamp(ny, 12, WATER_Y - 8);
+    } else {
+      ped.retarget = 0;
+    }
+  }
+  // Remove the long-down so the streets refill over time.
+  world.pedestrians = world.pedestrians.filter((p) => p.state !== 'down' || p.downTime < 25);
+}
+
+export function drawPedestrian(ctx, ped, cam) {
+  const sx = ped.x - cam.x;
+  const sy = ped.y - cam.y;
+  if (sx < -20 || sy < -20 || sx > cam.w + 20 || sy > cam.h + 20) return;
+  ctx.save();
+  ctx.translate(sx, sy);
+  if (ped.state === 'down') {
+    ctx.rotate(ped.angle + Math.PI / 2);
+    ctx.fillStyle = ped.pants;
+    ctx.fillRect(-9, -3, 18, 6);
+    ctx.fillStyle = ped.shirt;
+    ctx.fillRect(-4, -4, 9, 8);
+    ctx.fillStyle = ped.skin;
+    ctx.beginPath();
+    ctx.arc(8, 0, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  const bob = Math.sin(ped.phase) * 1.6;
+  // Legs.
+  ctx.strokeStyle = ped.pants;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, 2);
+  ctx.lineTo(Math.cos(ped.angle + 2.6) * 5, Math.sin(ped.angle + 2.6) * 5 + bob * 0.2 + 3);
+  ctx.moveTo(0, 2);
+  ctx.lineTo(Math.cos(ped.angle - 2.6) * 5, Math.sin(ped.angle - 2.6) * 5 - bob * 0.2 + 3);
+  ctx.stroke();
+  // Body.
+  ctx.fillStyle = ped.shirt;
+  ctx.beginPath();
+  ctx.arc(0, 0, 6, 0, Math.PI * 2);
+  ctx.fill();
+  // Head.
+  ctx.fillStyle = ped.skin;
+  ctx.beginPath();
+  ctx.arc(Math.cos(ped.angle) * 2, Math.sin(ped.angle) * 2, 3.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  void clamp;
 }
