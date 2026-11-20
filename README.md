@@ -10,9 +10,9 @@ static files.
 Steal cars, outrun the Coral Marina PD, and run jobs for fixer
 **Marisol Vega**.
 
-[![Play Marina Heat on make.fun](https://img.shields.io/badge/make.fun-gta--6--01-play%20now-brightgreen)](https://make.fun/c/gta6-01)
-[![Marina Heat competition](https://img.shields.io/badge/make.fun-competition%20gta6--01-blue)](https://make.fun/c/gta6-01)
-[![Marina Heat on make.fun](https://img.shields.io/badge/make.fun-entry-orange)](https://make.fun/c/gta6-01)
+[![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/DianChairo/marina-heat/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/DianChairo/marina-heat/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
 Referral: https://make.fun/r/8tpwxchz
 
