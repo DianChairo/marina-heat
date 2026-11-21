@@ -1,101 +1,35 @@
-# Marina Heat
+# marina-heat
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![rank](https://make.fun/badge/gta6-01/DianChairo/marina-heat/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 [![reward](https://make.fun/badge/gta6-01/DianChairo/marina-heat/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Marina Heat** is a top-down 2D open-world crime game set in Coral Marina, a
-sun-drenched coastal city of palm-lined streets, neon storefronts and a working
-marina. Steal cars, run jobs for fixer Marisol Vega, outrun the Coral Marina PD
-wanted-level chase system, and build your reputation — all in vanilla
-JavaScript on a single Canvas 2D surface. No dependencies, no build step, fully
-offline.
+Marina Heat — a top-down 2D open-world crime game set in Coral Marina, a seeded procedural 3200×3200 coastal city. Drive the boulevards, grab a car, run five jobs across the marina and the docks, dodge or outrun the police, and watch the wanted stars climb every time you pull the trigger. Vanilla JavaScript and Canvas, no libraries, no network — the whole city is generated from a seed.
 
-The city is procedurally generated from a seed (default 7): a 3200×3200 world
-with a street grid, city blocks with varied buildings, palm trees, sidewalks,
-and water with docks and moored boats along the east and south edges.
+## Run it
 
-## Screenshots
+```sh
+node serve.ts
+```
 
-| Cover | Driving |
-| --- | --- |
-| ![Cover](screenshots/1-cover.jpg) | ![Driving](screenshots/2-drive.jpg) |
+Then open http://localhost:8080 — press Enter to start. WASD to move and drive, E to enter or leave a car, mouse to aim, click to shoot, Shift to run, P to pause.
 
-| Police chase | Mission |
-| --- | --- |
-| ![Chase](screenshots/3-chase.jpg) | ![Mission](screenshots/4-mission.jpg) |
+## How it plays
 
-## How to run
-
-- **Just play:** open `game/index.html` in any modern browser. Everything is
-  static and offline; there is nothing to install.
-- **Local server:** `node serve.ts` (from the repo root) serves the game at
-  http://127.0.0.1:8917/ — handy because some browsers restrict ES modules on
-  `file://` URLs.
-- **Programmatic harness:** `node main.ts` copies the game and screenshots
-  into `$MAKEFUN_OUTPUT_DIR` (or `./output`) together with a `dossier.json`
-  describing the entry.
-
-## Controls
-
-| Input | Action |
-| --- | --- |
-| Enter | Start game / confirm |
-| W A S D / Arrow keys | Move on foot, drive |
-| Mouse | Aim |
-| Mouse button (hold) | Shoot |
-| E | Enter / exit the nearest car |
-| Shift | Sprint on foot / handbrake boost feel in a car |
-| P | Pause / resume |
-| M | Toggle sound |
-
-## Gameplay
-
-- **Open world:** pedestrians stroll the sidewalks, traffic flows along the
-  street grid and stops at junctions; every parked or moving car can be
-  stolen.
-- **Wanted system:** crimes (car theft, assault, shots fired, collisions)
-  raise your wanted level from 1 to 5 stars. Police cruisers spawn, pursue,
-  ram and shoot; break line of sight and stay clean to cool down.
-- **Combat:** aim with the mouse, hold to fire. Health, armor of the moment,
-  and a busted/wasted flow when the law or your wounds catch up with you.
-- **Missions:** fixer **Marisol Vega** (marked on the minimap) offers jobs —
-  deliveries, pickups, and the timed **Bay Run** checkpoint race around the
-  marina. Completing missions pays cash and raises your reputation.
-- **HUD & minimap:** cash, reputation, health, wanted stars, mission text and
-  a live minimap with player, police, traffic and objective markers.
-- **Audio:** a small WebAudio synth provides engine hum, sirens, gunshots,
-  pickups and UI blips — no audio files needed.
-- **Save:** cash, reputation, completed missions and settings persist in
-  `localStorage`.
-
-## Deterministic screenshots
-
-The game supports staged screenshot modes for reproducible captures:
-
-`game/index.html?shot=cover|drive|chase|mission&seed=7`
-
-Each mode builds the seeded city, poses a scene (cover tableau, driving,
-police chase, mission briefing), renders one frame, and sets
-`window.__shotReady = true` when the frame is ready to capture. See
-`shots.json` for the capture list (1280×800).
+- **Open world** — road grid, building blocks, palms, beach, marina water, docks and boats, all generated from a seed so every run with the same seed is the same city.
+- **Cars** — traffic cruises the roads and parked cars wait at the kerb. Press E near one to drive it; arcade handling with acceleration, steering and collision.
+- **Wanted system** — crimes raise your stars (up to 5). Police cars spawn on the roads, chase, ram, and bust you if they pin you down slow. Stay out of sight and the heat cools off.
+- **Missions** — a five-job chain: drive to the marina, pick up the package, lose the heat, deliver to the docks, escape the city. Each job pays out.
+- **Day cycle** — the light shifts from noon to dusk to night as you play.
+- **Minimap, HUD, health, money, speed and clock** — everything on screen.
 
 ## Layout
 
-```
-game/index.html        entry page (canvas #game)
-game/style.css         page styling
-game/src/*.js          engine modules: rng, city, input, storage, audio,
-                       vehicles, traffic, pedestrians, player, police,
-                       combat, missions, hud, minimap, shots, main
-main.ts                make.fun harness (copies entry + dossier to output)
-serve.ts               tiny static server for local play
-shots.json             screenshot capture manifest
-screenshots/           the four staged captures
-```
+- `game/index.html`, `game/style.css` — the page and its styles.
+- `game/src/` — the game modules: `main.js` (loop), `world.js` (state), `city.js` (procedural city), `player.js`, `vehicles.js`, `police.js`, `pedestrians.js`, `combat.js`, `missions.js`, `render.js`, `hud.js`, `audio.js`, `shots.js`, `input.js`, `random.js`, `config.js`.
+- `main.ts` — the make.fun program: copies `game/` and `screenshots/` to the output directory and writes `dossier.json` with the vendored `buildDossier` library.
+- `screenshots/` — four deterministic renders of the game (cover, drive, chase, mission), taken at 1280×800.
 
-Referral: https://make.fun/r/8tpwxchz
+---
 
-## License
-
-MIT — see [LICENSE](LICENSE).
+<sub>Entered on [make.fun](https://make.fun/?ref=8tpwxchz&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
